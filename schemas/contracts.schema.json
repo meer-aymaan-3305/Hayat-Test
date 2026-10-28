@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hayat contracts",
+  "description": "Generated-compatible aggregate marker; Pydantic models are the source of truth.",
+  "oneOf": [
+    {"$ref": "#/$defs/CaseFacts"},
+    {"$ref": "#/$defs/Conversation"},
+    {"$ref": "#/$defs/PersonaResult"},
+    {"$ref": "#/$defs/PlansResult"}
+  ],
+  "$defs": {
+    "CaseFacts": {"type":"object","required":["conversation_id","facts"],"additionalProperties":false},
+    "Conversation": {"type":"object","required":["guest_session_id"],"additionalProperties":false},
+    "PersonaResult": {"type":"object","additionalProperties":false},
+    "PlansResult": {"type":"object","required":["plans"],"additionalProperties":false}
+  }
+}

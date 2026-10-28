@@ -1,0 +1,32 @@
+[project]
+name = "hayat-backend"
+version = "0.1.0"
+description = "FastAPI backend foundation for the Hayat conversational assistant"
+readme = "README.md"
+authors = [
+    { name = "meer3305", email = "meeraymaanali@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.143.3",
+    "firebase-admin>=7.1.0",
+    "groq>=1.7.0",
+    "httpx>=0.28.1",
+    "pydantic>=2.14.1",
+    "python-dotenv>=1.2.4",
+    "streamlit>=1.66.0",
+    "supabase>=2.33.0",
+    "uvicorn>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+]
+
+[project.scripts]
+hayat-backend = "hayat_backend.main:run"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
