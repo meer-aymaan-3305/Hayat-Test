@@ -33,6 +33,8 @@ class Settings(BaseModel):
     firebase_api_key: SecretStr | None = None
     firebase_project_id: str | None = None
     firebase_service_account_json: SecretStr | None = None
+    policy_addendum_1_1_approved: bool = False
+    trawellcare_crm_webhook_url: str | None = None
 
     @property
     def missing_integrations(self) -> list[str]:
@@ -94,6 +96,8 @@ def load_settings() -> Settings:
             firebase_api_key=values.get("FIREBASE_API_KEY"),
             firebase_project_id=values.get("FIREBASE_PROJECT_ID"),
             firebase_service_account_json=values.get("FIREBASE_SERVICE_ACCOUNT_JSON"),
+            policy_addendum_1_1_approved=values.get("POLICY_ADDENDUM_1_1_APPROVED", "false").lower() in ("true", "1", "yes"),
+            trawellcare_crm_webhook_url=values.get("TRAWELLCARE_CRM_WEBHOOK_URL"),
         )
         settings.validate_integrations()
         return settings

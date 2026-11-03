@@ -16,3 +16,5 @@ wheels/
 
 # Local Supabase CLI state
 supabase/.temp/
+
+.env

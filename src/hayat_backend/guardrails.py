@@ -1,13 +1,25 @@
-"""Deterministic safety checks used before and after model calls."""
+"""Deterministic safety checks used before and after model calls.
+
+Authoritative specification: HAYAT_Guardrail_Document_v1.docx — Version 1.0.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 import re
 from typing import Any
+from uuid import UUID, uuid4
 
+from .policy_engine import (
+    CP1_OPENING_AR,
+    CP1_OPENING_EN,
+    EF_SCRIPTS_AR,
+    EF_SCRIPTS_EN,
+    PolicyDecision,
+    global_policy_engine,
+)
 
-POLICY_VERSION = "guardrails_v1"
+POLICY_VERSION = "HAYAT_Guardrails_v1.0"
 
 
 @dataclass(frozen=True)
@@ -20,15 +32,15 @@ class GuardrailDecision:
 
 _EMERGENCY = re.compile(
     r"\b(chest pain|can't breathe|cannot breathe|severe bleeding|unconscious|"
-    r"stroke|heart attack|difficulty breathing|suicidal|overdose)\b|"
+    r"stroke|heart attack|difficulty breathing|suicidal|overdose|acute pain)\b|"
     r"(ألم شديد في الصدر|لا أستطيع التنفس|نزيف شديد|فاقد الوعي|سكتة دماغية|أفكار انتحارية)",
     re.IGNORECASE,
 )
 _DIAGNOSIS = re.compile(
     r"\b(diagnose|diagnosis|what disease do i have|prescribe|prescription|dosage|"
     r"should i take (?:aspirin|ibuprofen|antibiotic|medication|medicine)|"
-    r"interpret my (?:scan|report|mri|x-ray|blood test))\b|"
-    r"(شخّص|تشخيص حالتي|ما هو مرضي|وصفة طبية|جرعة الدواء|فسر تحليلي|فسر الأشعة)",
+    r"interpret my (?:scan|report|mri|x-ray|blood test)|is this serious|could this be cancer)\b|"
+    r"(شخّص|تشخيص حالتي|ما هو مرضي|وصفة طبية|جرعة الدواء|فسر تحليلي|فسر الأشعة|هل هذا خطير|هل هذا سرطان)",
     re.IGNORECASE,
 )
 _COMMERCIAL_GUARANTEES = re.compile(
@@ -40,22 +52,23 @@ _COMMERCIAL_GUARANTEES = re.compile(
 _INJECTION = re.compile(
     r"(ignore (?:all\s+previous|all|previous|the) instructions|reveal (?:the\s+|your\s+)?system prompt|"
     r"show your hidden prompt|developer message|pretend you are|system instructions|"
-    r"jailbreak|override system)",
+    r"jailbreak|override system|disregard instructions)",
     re.IGNORECASE,
 )
 _UNRELATED = re.compile(
     r"\b(recipe|bake|cake|cookies|chocolate cake|football|premier league|champions league|"
-    r"crypto|bitcoin|ethereum|python code|write code|weather in)\b",
+    r"crypto|bitcoin|ethereum|solana|python code|programming|weather in|stock market|car repair)\b|"
+    r"(كعكة|كيك|وصفة طعام|كرة قدم|كريبتو|بيتكوين|برمجة)",
     re.IGNORECASE,
 )
 _IN_SCOPE = re.compile(
-    r"\b(hayat|medical|treatment|dental|aesthetic|wellness|longevity|preventive|"
+    r"\b(hayat|trawellcare|medical|treatment|dental|aesthetic|wellness|longevity|preventive|"
     r"recovery|travel|india|oman|uae|dubai|turkey|thailand|germany|uk|london|singapore|"
     r"destination|destinations|compare|comparison|clinic|hospital|consultation|coordinator|"
     r"service|services|visa|visas|budget|companion|booking|appointment|care|doctor|physician|"
     r"patient|prepare|preparation|documents|records|passport|information|pricing|cost|"
     r"timing|timeframe|schedule|step|process|help|guidance|mental health|stress|sleep)\b|"
-    r"(حياة|طبي|علاج|أسنان|تجميل|عافية|رفاهية|وقاية|تعافي|سفر|الهند|عمان|الإمارات|دبي|"
+    r"(حياة|ترافيل كير|طبي|علاج|أسنان|تجميل|عافية|رفاهية|وقاية|تعافي|سفر|الهند|عمان|الإمارات|دبي|"
     r"تركيا|تايلاند|ألمانيا|بريطانيا|وجهة|وجهات|مقارنة|عيادة|مستشفى|استشارة|منسق|خدمة|"
     r"خدمات|تأشيرة|ميزانية|موعد|حجز|طبيب|مريض|تجهيز|مستندات|تقارير|أوراق|معلومات|تكلفة|"
     r"وقت|خطوات|مساعدة|توتر|نوم|صحة)",
@@ -118,11 +131,6 @@ _SHORT_CONTEXTUAL_ANSWERS = re.compile(
     r"^\s*(نعم|أجل|بالتأكيد|تمام|موافق|حسناً|حسنا|لا|كلا|أي منهما|لا مانع|لا تفضيل|الخيار الأول|اقترح لي)\b",
     re.IGNORECASE,
 )
-_UNRELATED = re.compile(
-    r"\b(bake|cake|recipe|football|premier league|crypto|bitcoin|ethereum|solana|python code|programming|weather in|stock market|car repair)\b|"
-    r"(كعكة|كيك|وصفة طعام|كرة قدم|كريبتو|بيتكوين|برمجة)",
-    re.IGNORECASE,
-)
 
 
 def inspect_input(
@@ -130,42 +138,47 @@ def inspect_input(
     conversation: Any = None,
     pending_field: str | None = None,
     extracted_facts: list[Any] | None = None,
+    language: str = "en",
 ) -> GuardrailDecision:
-    """Return a deterministic policy decision for user text."""
-    if _EMERGENCY.search(text):
-        return GuardrailDecision(
-            escalation_required=True,
-            reason="possible_emergency",
-            reply=(
-                "If this may be an emergency, contact your local emergency services "
-                "or seek urgent in-person medical care now. Hayat cannot assess emergencies."
-            ),
-        )
-    if _DIAGNOSIS.search(text):
-        return GuardrailDecision(
-            escalation_required=True,
-            reason="medical_advice",
-            reply=(
-                "I can't diagnose conditions, prescribe treatment, or interpret medical "
-                "reports. Please consult a qualified clinician; I can help coordinate a "
-                "non-clinical consultation."
-            ),
-        )
-    if _COMMERCIAL_GUARANTEES.search(text):
-        return GuardrailDecision(
-            escalation_required=True,
-            reason="unsupported_guarantee",
-            reply=(
-                "I can't guarantee prices, availability, visa approval, bookings, or "
-                "outcomes. A coordinator can confirm current details after review."
-            ),
-        )
-    if _INJECTION.search(text):
+    """Return a deterministic policy decision for user text grounded in the governing specification."""
+    session_id = getattr(conversation, "session_id", uuid4())
+    conversation_id = getattr(conversation, "id", uuid4())
+    is_locked_emergency = bool(getattr(conversation, "emergency_locked", False))
+    is_locked_crisis = bool(getattr(conversation, "crisis_locked", False))
+
+    # Evaluate against the centralized deterministic policy engine
+    decision: PolicyDecision = global_policy_engine.evaluate_inbound(
+        text,
+        session_id=session_id,
+        conversation_id=conversation_id,
+        current_step="planning your care or travel",
+        language=language,
+        is_locked_emergency=is_locked_emergency,
+        is_locked_crisis=is_locked_crisis,
+    )
+
+    if decision.blocked:
+        # If policy engine blocked the request (EF-1, EF-2, EF-3, EF-4, EF-5, EF-6, EF-9, EF-10, EF-11)
+        reason_map = {
+            "EF-9": "possible_emergency",
+            "EF-10": "crisis_self_harm",
+            "EF-5": "prompt_injection",
+            "EF-6": "credential_payment_pasted",
+            "EF-1": "medical_advice",
+            "EF-3": "provider_recommendation",
+            "EF-2": "unsolicited_clinical_detail",
+            "EF-4": "out_of_scope",
+            "EF-11": "abusive_input",
+        }
+        reason = reason_map.get(decision.rule_id or "", decision.rule_id or "policy_violation")
         return GuardrailDecision(
             blocked=True,
-            reason="prompt_injection",
-            reply="I can help with Hayat services and coordination, but I can't reveal internal instructions.",
+            escalation_required=decision.escalation_required,
+            reason=reason,
+            reply=decision.reply,
         )
+
+    # Contextual in-scope validation for continuing conversational turns
     has_valid_in_scope = bool(
         extracted_facts
         or _MEDICAL_SPECIALTIES.search(text)
@@ -178,25 +191,22 @@ def inspect_input(
     )
 
     if _UNRELATED.search(text) and not has_valid_in_scope:
+        scripts = EF_SCRIPTS_AR if language == "ar" else EF_SCRIPTS_EN
         return GuardrailDecision(
             blocked=True,
             reason="out_of_scope",
-            reply=None,
+            reply=scripts["EF-4"].format(step="planning your care or travel"),
         )
 
-    # Short contextual answers in ongoing conversations are always in-scope
     if _SHORT_CONTEXTUAL_ANSWERS.search(text):
         return GuardrailDecision()
 
-    # If the user provided valid consultation facts (specialty, destination, name, timing, etc.)
     if extracted_facts:
         return GuardrailDecision()
 
-    # Procedural questions about Hayat services, preparation, destinations, or steps
     if _PROCEDURAL_QUESTIONS.search(text):
         return GuardrailDecision()
 
-    # Broad in-scope checks
     if (
         _IN_SCOPE.search(text)
         or _MEDICAL_SPECIALTIES.search(text)
@@ -220,59 +230,28 @@ def inspect_input(
                 category = facts["needs"].get("customer_category") or facts["needs"].get("care_category")
 
         if category in {"medical_treatment", "wellness", "medical", "cardiology", "orthopedic"} or has_prior_messages:
-            # Reject obvious unrelated requests even in an active conversation
             if _UNRELATED.search(text) and not has_valid_in_scope:
-                return GuardrailDecision(blocked=True, reason="out_of_scope")
-            # In an active journey, answers to pending questions or conversational queries are in-scope
+                scripts = EF_SCRIPTS_AR if language == "ar" else EF_SCRIPTS_EN
+                return GuardrailDecision(
+                    blocked=True,
+                    reason="out_of_scope",
+                    reply=scripts["EF-4"].format(step="planning your care or travel"),
+                )
             if pending_field:
                 return GuardrailDecision()
-            # General query with a question mark or conversational prompt
             if "?" in text or "؟" in text or len(text.split()) < 15:
                 return GuardrailDecision()
 
+    scripts = EF_SCRIPTS_AR if language == "ar" else EF_SCRIPTS_EN
     return GuardrailDecision(
         blocked=True,
         reason="out_of_scope",
-        reply=None,
+        reply=scripts["EF-4"].format(step="planning your care or travel"),
     )
 
 
-def validate_output(text: str) -> str:
-    """Sanitize model output: strip internal prompts, role labels, and trailing auto-regressions."""
+def validate_output(text: str, language: str = "en") -> str:
+    """Sanitize model output using the authoritative policy engine."""
     if not isinstance(text, str) or not text.strip():
         raise ValueError("Model output must be non-empty text.")
-    if _INJECTION.search(text):
-        return "I can help with Hayat services and coordination. How may I assist you?"
-
-    cleaned = text.strip()
-
-    # If the model hallucinates an entire transcript like "[User] ... \n[Assistant] ...",
-    # extract the assistant's portion only.
-    if re.search(r"\[Assistant\]:?", cleaned, re.IGNORECASE):
-        cleaned = re.split(r"\[Assistant\]:?", cleaned, flags=re.IGNORECASE)[-1].strip()
-    elif re.search(r"\bAssistant:\s*", cleaned, re.IGNORECASE):
-        cleaned = re.split(r"\bAssistant:\s*", cleaned, flags=re.IGNORECASE)[-1].strip()
-
-    # Strip auto-regressive continuation if the model simulated a subsequent [User] turn
-    split_markers = [
-        "\n\n[User]", "\n[User]", "\n\nUser:", "\nUser:",
-        "\n\n[Human]", "\n[Human]", "\n\nHuman:", "\nHuman:",
-    ]
-    for marker in split_markers:
-        if marker in cleaned:
-            cleaned = cleaned.split(marker)[0].strip()
-
-    # Strip leading role markers like [Assistant]: or Assistant: or [User]:
-    cleaned = re.sub(
-        r"^\s*\[?(?:Assistant|Hayat|Bot|User|Human)\]?:?\s*",
-        "",
-        cleaned,
-        flags=re.IGNORECASE,
-    ).strip()
-
-    # Strip raw JSON fences if model outputted raw JSON block
-    if cleaned.startswith("```json"):
-        cleaned = re.sub(r"^```json\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-
-    return cleaned
+    return global_policy_engine.validate_outbound(text, language=language)

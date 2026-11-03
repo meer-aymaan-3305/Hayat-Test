@@ -14,7 +14,15 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from .schemas.consultation import ConsultationDetails, ConsultationStatus, PreferredContactMethod
+from .schemas.coordinator import CoordinatorHandoff, HandoffStatus
+from .schemas.programme import (
+    ContactConsentStatus,
+    EnquiryStatus,
+    RegistrationStatus,
+    SignatureProgrammeEnquiry,
+)
 from .schemas.intake import ConsultationProgress, FactValue, PersonaReadyProfile
+from .audit_logging import ComplianceAuditStore, global_audit_store
 
 
 @dataclass
@@ -47,6 +55,12 @@ class Conversation:
     state: str = "requested"
     fact_history: list[dict[str, object]] = field(default_factory=list)
     summary: str = ""
+    emergency_locked: bool = False
+    crisis_locked: bool = False
+    cp5_confirmed_at: datetime | None = None
+    confirmed_appendix_a: dict[str, Any] | None = None
+    persona_name: str | None = None
+    persona_status: str = "UNRESOLVED"
 
 
 @dataclass
@@ -81,8 +95,11 @@ class MemoryStore:
         self._consents: dict[UUID, list[dict[str, object]]] = {}
         self._leads: dict[UUID, Lead] = {}
         self._consultations: dict[UUID, Consultation] = {}
+        self._handoffs: dict[UUID, CoordinatorHandoff] = {}
+        self._programme_enquiries: dict[UUID, SignatureProgrammeEnquiry] = {}
         self._otp_challenges: dict[str, tuple[UUID, str]] = {}
         self._idempotent_chat: dict[tuple[UUID, str], dict[str, object]] = {}
+        self.audit_store: ComplianceAuditStore = global_audit_store
 
     def create_guest_session(self, locale: str = "en") -> tuple[Session, str]:
         raw_token = secrets.token_urlsafe(32)
@@ -378,6 +395,63 @@ class MemoryStore:
         conversation.state = "pending_coordinator_confirmation"
         return consultation
 
+    def save_coordinator_handoff(self, handoff: CoordinatorHandoff) -> CoordinatorHandoff:
+        self._handoffs[handoff.id] = handoff
+        return handoff
+
+    def get_coordinator_handoff(self, handoff_id: UUID | str) -> CoordinatorHandoff | None:
+        hid = _as_uuid(handoff_id)
+        return self._handoffs.get(hid)
+
+    def get_handoff_for_conversation(self, conversation_id: UUID | str) -> CoordinatorHandoff | None:
+        cid = _as_uuid(conversation_id)
+        return next((h for h in self._handoffs.values() if h.conversation_id == cid), None)
+
+    def save_programme_enquiry(self, enquiry: SignatureProgrammeEnquiry) -> SignatureProgrammeEnquiry:
+        self._programme_enquiries[enquiry.enquiry_id] = enquiry
+        return enquiry
+
+    def get_programme_enquiry(self, enquiry_id: UUID | str) -> SignatureProgrammeEnquiry | None:
+        try:
+            eid = _as_uuid(enquiry_id)
+            return self._programme_enquiries.get(eid)
+        except (ValueError, TypeError):
+            return self.get_programme_enquiry_by_reference_code(str(enquiry_id))
+
+    def get_programme_enquiry_by_reference_code(self, reference_code: str) -> SignatureProgrammeEnquiry | None:
+        code = reference_code.strip().upper()
+        return next(
+            (e for e in self._programme_enquiries.values() if e.reference_code and e.reference_code.upper() == code),
+            None,
+        )
+
+    def get_programme_enquiry_for_conversation(self, conversation_id: UUID | str) -> SignatureProgrammeEnquiry | None:
+        cid = _as_uuid(conversation_id)
+        return next((e for e in self._programme_enquiries.values() if e.conversation_id == cid), None)
+
+    def upsert_programme_enquiry(
+        self,
+        conversation_id: UUID | str,
+        session_id: UUID | str,
+        updates: dict[str, Any],
+    ) -> SignatureProgrammeEnquiry:
+        cid = _as_uuid(conversation_id)
+        sid = _as_uuid(session_id)
+        existing = self.get_programme_enquiry_for_conversation(cid)
+        if existing is None:
+            enquiry = SignatureProgrammeEnquiry(
+                conversation_id=cid,
+                session_id=sid,
+                **updates,
+            )
+        else:
+            data = existing.model_dump()
+            data.update(updates)
+            data["updated_at"] = datetime.now(UTC)
+            enquiry = SignatureProgrammeEnquiry.model_validate(data)
+        self.save_programme_enquiry(enquiry)
+        return enquiry
+
     def export_conversation(self, conversation: Conversation) -> dict[str, object]:
         return {
             "schema_version": "conversation_v1",
@@ -403,6 +477,16 @@ class MemoryStore:
                     "submitted_at": consultation.submitted_at.isoformat(),
                 }
                 if (consultation := self._consultations.get(conversation.consultation_id))
+                else None
+            ),
+            "coordinator_handoff": (
+                handoff.model_dump(mode="json")
+                if (handoff := self.get_handoff_for_conversation(conversation.id))
+                else None
+            ),
+            "programme_enquiry": (
+                enquiry.model_dump(mode="json")
+                if (enquiry := self.get_programme_enquiry_for_conversation(conversation.id))
                 else None
             ),
         }

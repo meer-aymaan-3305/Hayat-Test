@@ -132,6 +132,114 @@ DEFAULT_APPROVED_KNOWLEDGE: list[KnowledgeChunk] = [
         ),
         approved=True,
     ),
+    KnowledgeChunk(
+        text=(
+            "Trawellcare Signature Wellness Programmes Overview: Trawellcare is developing three distinctive "
+            "premium wellness retreat programmes: HAYAT-100 (longevity & healthy ageing), AAfiya (women's fitness "
+            "& wellness), and FFounders (executive fitness & wellness for founders and leaders). "
+            "Each signature programme is designed as a seven-day experience comprising five retreat days and two travel days. "
+            "All three programmes are individually curated with no fixed or standard package price. "
+            "Potential retreat destinations being explored include the United States, Spain, Japan, Singapore, "
+            "India, and the United Arab Emirates. Specific facilities, dates and retreat partners are currently under curation. "
+            "Visitors can register their interest without any payment or booking commitment."
+        ),
+        source=SourceReference(
+            document_id="hayat-signature-overview-v1",
+            title="Trawellcare Signature Wellness Programmes Overview",
+            version="1.0",
+        ),
+        approved=True,
+    ),
+    KnowledgeChunk(
+        text=(
+            "HAYAT-100 Longevity & Healthy Ageing Retreat: A signature longevity and healthy-ageing retreat concept "
+            "designed for adults across different stages of life who want to invest in their future health. "
+            "Philosophy: It is not just about living to 100; it is about making every year count. "
+            "Core proposed components include personal health and lifestyle awareness, longevity education, guided fitness "
+            "and mobility, healthy dining and nutrition workshops, and restorative mindfulness and sleep/rest recovery education. "
+            "These are proposed experiences under curation with destination partners rather than guaranteed clinical treatments. "
+            "HAYAT-100 is a non-clinical wellness retreat and does not offer anti-ageing medical treatments, cure diseases, "
+            "or guarantee a specific lifespan or health outcome."
+        ),
+        source=SourceReference(
+            document_id="hayat-100-longevity-v1",
+            title="HAYAT-100 Longevity Retreat Guide",
+            version="1.0",
+        ),
+        approved=True,
+    ),
+    KnowledgeChunk(
+        text=(
+            "AAfiya Women's Fitness & Wellness Retreat: A women-focused retreat designed to step away from daily routines "
+            "and reconnect through movement, nutrition, self-care, and relaxation. Philosophy: Your journey. Your wellbeing. Your way. "
+            "AAfiya is exclusively for women and welcomes all fitness levels from beginners to active individuals without any fitness prerequisites. "
+            "Proposed activities include pilates, yoga, guided strength and conditioning, women's health workshops, mindful eating, "
+            "restorative spa experiences, and curated group connection."
+        ),
+        source=SourceReference(
+            document_id="hayat-aafiya-women-v1",
+            title="AAfiya Women's Retreat Guide",
+            version="1.0",
+        ),
+        approved=True,
+    ),
+    KnowledgeChunk(
+        text=(
+            "FFounders Executive Fitness & Wellness Retreat: A premium retreat created for startup founders, entrepreneurs, "
+            "investors, and C-suite business leaders to recharge, reset, and build resilience. "
+            "Philosophy: Building a successful business should never come at the expense of building a healthier life. "
+            "Focus areas include physical conditioning, energy and vitality, sleep and recovery science, stress management, "
+            "and curated peer discussions with fellow leaders. FFounders is primarily a fitness and wellness retreat, not a business conference."
+        ),
+        source=SourceReference(
+            document_id="hayat-ffounders-executive-v1",
+            title="FFounders Executive Retreat Guide",
+            version="1.0",
+        ),
+        approved=True,
+    ),
+    KnowledgeChunk(
+        text=(
+            "Signature Programmes Pricing & Customisation: All three signature programmes (HAYAT-100, AAfiya, FFounders) "
+            "are individually curated, and there is no fixed package price or generic package rate. "
+            "Pricing depends on the selected destination country, retreat facility, accommodation tier, activities, services, "
+            "and customisation requirements. A tailored proposal is prepared after understanding the visitor's preferences and expectations."
+        ),
+        source=SourceReference(
+            document_id="hayat-signature-pricing-v1",
+            title="Signature Programmes Pricing and Customisation Policy",
+            version="1.0",
+        ),
+        approved=True,
+    ),
+    KnowledgeChunk(
+        text=(
+            "Signature Programmes Potential Destinations & Schedule: Trawellcare is exploring candidate destinations across the "
+            "Americas, Europe, the Middle East and Asia, including the United States, Spain, Japan, Singapore, India, and the UAE. "
+            "These are markets under exploration rather than confirmed facilities. Dates and itineraries are actively being curated. "
+            "Each retreat is planned as a seven-day experience with five retreat days and two travel days."
+        ),
+        source=SourceReference(
+            document_id="hayat-signature-destinations-v1",
+            title="Signature Programmes Destination Exploration Guide",
+            version="1.0",
+        ),
+        approved=True,
+    ),
+    KnowledgeChunk(
+        text=(
+            "برامج العافية المتميزة - نظرة عامة: تطور ترافيل كير ثلاثة برامج عافية متميزة: "
+            "حياة-100 (طول العمر والشيخوخة الصحية)، وعافية (لياقة وعافية السيدات)، وفاوندرز (لياقة وعافية القادة ورواد الأعمال). "
+            "مدة كل برنامج سبعة أيام (خمسة أيام منتجع ويومان للسفر). يتم تصميم البرامج بشكل مخصص وفردي دون سعر ثابت للباقة. "
+            "الوجهات قيد الاستكشاف تشمل أمريكا وإسبانيا واليابان وسنغافورة والهند والإمارات. التسجيل مجاني ولا يترتب عليه أي التزام مالي."
+        ),
+        source=SourceReference(
+            document_id="hayat-signature-overview-ar-v1",
+            title="نظرة عامة على برامج العافية المتميزة - حياة",
+            version="1.0",
+        ),
+        approved=True,
+    ),
 ]
 
 
@@ -178,6 +286,23 @@ class InMemoryRetriever:
             if "wellness" in lower_query or "stress" in lower_query or "mental" in lower_query or "sleep" in lower_query or "عافي" in lower_query:
                 if "hayat wellness programmes" in chunk_lower or "برامج العافية" in chunk_lower:
                     score += 3.0
+
+            # Signature Wellness Programmes signals
+            if "hayat-100" in lower_query or "hayat 100" in lower_query or "longevity" in lower_query or "ageing" in lower_query or "aging" in lower_query:
+                if "hayat-100" in chunk_lower or "longevity" in chunk_lower:
+                    score += 5.0
+            if "aafiya" in lower_query or "عافية" in lower_query or "women" in lower_query or "pilates" in lower_query:
+                if "aafiya" in chunk_lower or "عافية" in chunk_lower or "women" in chunk_lower:
+                    score += 5.0
+            if "ffounders" in lower_query or "founder" in lower_query or "executive" in lower_query or "فاوندرز" in lower_query:
+                if "ffounders" in chunk_lower or "executive" in chunk_lower:
+                    score += 5.0
+            if "signature" in lower_query or "retreat" in lower_query or "retreats" in lower_query:
+                if "signature wellness programmes" in chunk_lower or "برامج العافية المتميزة" in chunk_lower:
+                    score += 4.0
+            if any(term in lower_query for term in ["price", "cost", "how much", "rate", "سعر", "تكلفة"]):
+                if "pricing & customisation" in chunk_lower or "individually curated" in chunk_lower:
+                    score += 5.0
 
             if score > 0.0:
                 scored.append((score, chunk))

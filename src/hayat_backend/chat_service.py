@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from .guardrails import POLICY_VERSION, inspect_input, validate_output
 from .language import detect_language
@@ -17,6 +18,20 @@ from .schemas.chat import ChatAction
 from .question_planner import QuestionPlanner, append_planned_question
 
 
+from .policy_engine import (
+    CP1_OPENING_AR,
+    CP1_OPENING_EN,
+    EF_SCRIPTS_AR,
+    EF_SCRIPTS_EN,
+    global_policy_engine,
+)
+from .audit_logging import global_audit_store
+from .schemas.appendix_a import AppendixAIntakePayload, PERMITTED_FIELD_NAMES
+from .crm_client import CRMWebhookClient
+from .coordinator_service import CoordinatorHandoffService
+from .programme_service import ProgrammeConversationService
+
+
 def _opening(language: str) -> str:
     return "مرحباً! " if language == "ar" else "Hello! "
 
@@ -24,10 +39,11 @@ def _opening(language: str) -> str:
 def _out_of_scope(language: str) -> str:
     if language == "ar":
         return (
-            "عذراً، أستطيع الإجابة فقط عن خدمات حَيَاة، والسفر الطبي، والعافية، "
-            "والاستشارات والتنسيق المرتبط بها."
+            "هذا خارج نطاق ما يمكنني المساعدة به هنا — تركيزي ينصب على التخطيط لرحلتك مع ترافيل كير. "
+            "عذراً، أستطيع الإجابة فقط عن خدمات حَيَاة، والسفر الطبي، والعافية، والاستشارات والتنسيق المرتبط بها."
         )
     return (
+        "That's outside what I can help with here — I'm focused on planning your Trawellcare journey. "
         "Sorry, I can answer questions only about Hayat services, medical travel, "
         "wellness, consultations, and related coordination."
     )
@@ -67,12 +83,21 @@ class ChatService:
         model: ChatModel,
         retriever: InMemoryRetriever | None = None,
         history_limit: int = 10,
+        crm_client: CRMWebhookClient | None = None,
+        coordinator_service: CoordinatorHandoffService | None = None,
     ) -> None:
         self.store = store
         self.model = model
         self.retriever = retriever if retriever is not None else InMemoryRetriever()
         self.history_limit = history_limit
         self.question_planner = QuestionPlanner()
+        self.crm_client = crm_client if crm_client is not None else CRMWebhookClient()
+        self.coordinator_service = (
+            coordinator_service
+            if coordinator_service is not None
+            else CoordinatorHandoffService(self.store)
+        )
+        self.programme_service = ProgrammeConversationService(self.store)
 
     def initial_actions(self, language: str) -> list[ChatAction]:
         return [
@@ -100,6 +125,126 @@ class ChatService:
         if cached:
             return cached
 
+        # HB-10 & AL-6: If session is already in an emergency or crisis lock, refuse normal intake
+        is_locked_emergency = getattr(conversation, "emergency_locked", False) or any(
+            m.role == "assistant" and ("999 in Oman" in m.content or "998 في الإمارات" in m.content or "999 في سلطنة عمان" in m.content)
+            for m in conversation.messages
+        )
+        is_locked_crisis = getattr(conversation, "crisis_locked", False) or any(
+            m.role == "assistant" and ("crisis line" in m.content or "خط المساعدة في الأزمات" in m.content)
+            for m in conversation.messages
+        )
+        if is_locked_emergency:
+            conversation.emergency_locked = True
+        if is_locked_crisis:
+            conversation.crisis_locked = True
+
+        if is_locked_emergency:
+            scripts = EF_SCRIPTS_AR if language == "ar" else EF_SCRIPTS_EN
+            reply = scripts["EF-9"]
+            global_audit_store.log_priority_incident(
+                session_id=conversation.session_id,
+                conversation_id=conversation.id,
+                rule_id="EF-9",
+                incident_type="medical_emergency",
+            )
+            u_msg = self.store.append_message(conversation, "user", text, language)
+            a_msg = self.store.append_message(conversation, "assistant", reply, language)
+            global_audit_store.log_transcript(
+                session_id=conversation.session_id,
+                conversation_id=conversation.id,
+                sequence=len(conversation.messages) - 1,
+                role="user",
+                content=text,
+                language=language,
+            )
+            global_audit_store.log_transcript(
+                session_id=conversation.session_id,
+                conversation_id=conversation.id,
+                sequence=len(conversation.messages),
+                role="assistant",
+                content=reply,
+                language=language,
+            )
+            return {
+                "conversation_id": conversation.id,
+                "user_message": u_msg,
+                "assistant_message": a_msg,
+                "language": language,
+                "escalation_required": True,
+                "escalation_reason": "EF-9",
+                "sources": [],
+                "policy_version": POLICY_VERSION,
+                "fact_updates": [],
+                "persona_profile": self.store.persona_profile(conversation),
+                "conversation_state": "escalated",
+                "next_action": "escalate",
+                "suggestions": [],
+                "suggested_actions": [],
+                "consultation_progress": self.store.consultation_progress(conversation),
+                "answer": reply,
+                "reply": reply,
+                "follow_up_question": None,
+                "follow_up_target": None,
+                "profile_updates": [],
+                "missing_required_fields": [],
+                "submission_status": "blocked",
+                "consultation": None,
+            }
+
+        if is_locked_crisis:
+            scripts = EF_SCRIPTS_AR if language == "ar" else EF_SCRIPTS_EN
+            reply = scripts["EF-10"]
+            global_audit_store.log_priority_incident(
+                session_id=conversation.session_id,
+                conversation_id=conversation.id,
+                rule_id="EF-10",
+                incident_type="crisis_self_harm",
+            )
+            u_msg = self.store.append_message(conversation, "user", text, language)
+            a_msg = self.store.append_message(conversation, "assistant", reply, language)
+            global_audit_store.log_transcript(
+                session_id=conversation.session_id,
+                conversation_id=conversation.id,
+                sequence=len(conversation.messages) - 1,
+                role="user",
+                content=text,
+                language=language,
+            )
+            global_audit_store.log_transcript(
+                session_id=conversation.session_id,
+                conversation_id=conversation.id,
+                sequence=len(conversation.messages),
+                role="assistant",
+                content=reply,
+                language=language,
+            )
+            return {
+                "conversation_id": conversation.id,
+                "user_message": u_msg,
+                "assistant_message": a_msg,
+                "language": language,
+                "escalation_required": True,
+                "escalation_reason": "EF-10",
+                "sources": [],
+                "policy_version": POLICY_VERSION,
+                "fact_updates": [],
+                "persona_profile": self.store.persona_profile(conversation),
+                "conversation_state": "escalated",
+                "next_action": "escalate",
+                "suggestions": [],
+                "suggested_actions": [],
+                "consultation_progress": self.store.consultation_progress(conversation),
+                "answer": reply,
+                "reply": reply,
+                "follow_up_question": None,
+                "follow_up_target": None,
+                "profile_updates": [],
+                "missing_required_fields": [],
+                "submission_status": "blocked",
+                "consultation": None,
+            }
+
         # Count prior assistant messages before appending the new user message
         prior_assistant_messages = [m for m in conversation.messages if m.role == "assistant"]
         prior_assistant_count = len(prior_assistant_messages)
@@ -110,8 +255,132 @@ class ChatService:
         # Determine pending field before user message is processed
         pending_field = self.question_planner.current_pending_field(conversation)
 
-        # Append user message
+        # Append user message and log transcript
         user_message = self.store.append_message(conversation, "user", text, language)
+        global_audit_store.log_transcript(
+            session_id=conversation.session_id,
+            conversation_id=conversation.id,
+            sequence=len(conversation.messages),
+            role="user",
+            content=text,
+            language=language,
+        )
+
+        # Check if message pertains to Signature Wellness Programmes (Separate Service Category)
+        if self.programme_service.is_programme_intent(text, conversation):
+            decision = inspect_input(
+                text,
+                conversation=conversation,
+                pending_field=pending_field,
+                extracted_facts=[],
+                language=language,
+            )
+            if decision.blocked:
+                if decision.reason in ("possible_emergency", "EF-9"):
+                    conversation.emergency_locked = True
+                    conversation.state = "escalated"
+                elif decision.reason in ("crisis_self_harm", "EF-10"):
+                    conversation.crisis_locked = True
+                    conversation.state = "escalated"
+                reply = decision.reply or _out_of_scope(language)
+                a_msg = self.store.append_message(conversation, "assistant", reply, language)
+                global_audit_store.log_transcript(
+                    session_id=conversation.session_id,
+                    conversation_id=conversation.id,
+                    sequence=len(conversation.messages),
+                    role="assistant",
+                    content=reply,
+                    language=language,
+                )
+                return {
+                    "conversation_id": conversation.id,
+                    "user_message": user_message,
+                    "assistant_message": a_msg,
+                    "language": language,
+                    "escalation_required": decision.escalation_required,
+                    "escalation_reason": decision.reason,
+                    "sources": [],
+                    "policy_version": POLICY_VERSION,
+                    "fact_updates": [],
+                    "persona_profile": self.store.persona_profile(conversation),
+                    "conversation_state": "escalated",
+                    "next_action": "escalate",
+                    "suggestions": [],
+                    "suggested_actions": [],
+                    "consultation_progress": self.store.consultation_progress(conversation),
+                    "answer": reply,
+                    "reply": reply,
+                    "follow_up_question": None,
+                    "follow_up_target": None,
+                    "profile_updates": [],
+                    "missing_required_fields": [],
+                    "submission_status": "blocked",
+                    "consultation": None,
+                    "coordinator_handoff": None,
+                    "programme_enquiry": self.store.get_programme_enquiry_for_conversation(conversation.id),
+                    "service_category": "signature_programmes",
+                }
+
+            prog_result = self.programme_service.handle_programme_message(
+                conversation=conversation,
+                text=text,
+                language=language,
+            )
+            reply = prog_result["reply"]
+            if prior_user_message_count == 0 and not reply.startswith("Hello") and not reply.startswith("مرحباً"):
+                reply = _opening(language) + reply
+
+            assistant_message = self.store.append_message(conversation, "assistant", reply, language)
+            global_audit_store.log_transcript(
+                session_id=conversation.session_id,
+                conversation_id=conversation.id,
+                sequence=len(conversation.messages),
+                role="assistant",
+                content=reply,
+                language=language,
+            )
+
+            chunks = await self.retriever.retrieve(text)
+            sources = [
+                {
+                    "document_id": chunk.source.document_id,
+                    "title": chunk.source.title,
+                    "version": chunk.source.version,
+                }
+                for chunk in chunks
+            ]
+            progress = self.store.consultation_progress(conversation)
+
+            result = {
+                "conversation_id": conversation.id,
+                "user_message": user_message,
+                "assistant_message": assistant_message,
+                "language": language,
+                "escalation_required": False,
+                "escalation_reason": None,
+                "sources": sources,
+                "policy_version": POLICY_VERSION,
+                "fact_updates": [],
+                "persona_profile": self.store.persona_profile(conversation),
+                "conversation_state": "signature_programme_enquiry",
+                "next_action": "explore_programmes",
+                "suggestions": prog_result["suggestions"],
+                "suggested_actions": prog_result["suggestions"],
+                "consultation_progress": progress,
+                "answer": reply,
+                "reply": reply,
+                "follow_up_question": None,
+                "follow_up_target": None,
+                "profile_updates": [],
+                "missing_required_fields": [],
+                "submission_status": "not_applicable",
+                "consultation": None,
+                "coordinator_handoff": None,
+                "programme_enquiry": prog_result.get("programme_enquiry"),
+                "service_category": "signature_programmes",
+            }
+            self.store.cache_chat(conversation.id, client_message_id, result)
+            return result
 
         # Disambiguation & semantic mapping of short contextual answers relative to previous questions
         clarification_reply: str | None = None
@@ -154,8 +423,9 @@ class ChatService:
                         f"شكراً لك. تم تأكيد رقم هاتفك {phone_val}. يرجى تأكيد رقم الهاتف لنتمكن من تجهيز طلب الاستشارة."
                     )
             elif ("city" in last_lower or "destination" in last_lower) and any(term in text.lower() for term in ["yes", "any", "either", "fine", "no preference", "نعم", "أي"]):
+                dest_val = "India (any city)" if "in india" in last_lower else "Flexible (open to suggestions)"
                 self.store.save_fact_updates(conversation, [
-                    FactValue(field_name="destination_preference", value="India (any city)", status=FactStatus.CONFIRMED, source_message_id=user_message.id, confidence=1.0)
+                    FactValue(field_name="destination_preference", value=dest_val, status=FactStatus.CONFIRMED, source_message_id=user_message.id, confidence=1.0)
                 ])
 
         # Extract facts with conversational context
@@ -191,7 +461,66 @@ class ChatService:
             conversation=conversation,
             pending_field=pending_field,
             extracted_facts=all_facts,
+            language=language,
         )
+
+        if decision.blocked:
+            if decision.reason in ("possible_emergency", "EF-9"):
+                conversation.emergency_locked = True
+                conversation.state = "escalated"
+            elif decision.reason in ("crisis_self_harm", "EF-10"):
+                conversation.crisis_locked = True
+                conversation.state = "escalated"
+
+        # Appendix B Persona Evaluation
+        persona_name, persona_status, ambiguity_note = global_policy_engine.evaluate_persona(conversation.case_facts)
+        conversation.persona_name = persona_name
+        conversation.persona_status = persona_status
+        if persona_status == "REQUIRES_CONFIRMATION" and ambiguity_note and clarification_reply is None and not decision.blocked:
+            clarification_reply = ambiguity_note
+
+        # Consultation Summary Review Intent (Section 4)
+        summary_intent = bool(re.search(
+            r"\b(summary|review|show my details|show details|what details|what information|check details)\b|"
+            r"ملخص|مراجعة|عرض تفاصيلي|ما هي التفاصيل",
+            text,
+            re.IGNORECASE,
+        ))
+        if summary_intent and self.coordinator_service.is_consultation_ready(conversation) and not decision.blocked and clarification_reply is None:
+            clarification_reply = self._build_consultation_summary(conversation, language)
+            conversation.state = "awaiting_consent"
+
+        # CP-5 & DP-2: Explicit confirmation check before transmission
+        consent_type, consent_note = global_policy_engine.evaluate_cp5_consent(text, language)
+        if conversation.state in ("awaiting_consent", "ready_for_submission", "offering_consultation", "pending_submission") and not decision.blocked:
+            if consent_type == "AFFIRMATIVE":
+                conversation.cp5_confirmed_at = datetime.now(UTC)
+                confirmed_payload = {
+                    k: v for k, v in conversation.case_facts.items()
+                    if not isinstance(v, dict) and k in PERMITTED_FIELD_NAMES
+                }
+                conversation.confirmed_appendix_a = confirmed_payload
+                await self.crm_client.transmit_confirmed_payload(
+                    session_id=conversation.session_id,
+                    conversation_id=conversation.id,
+                    payload=confirmed_payload,
+                    confirmation_timestamp=conversation.cp5_confirmed_at,
+                )
+                self.coordinator_service.initiate_handoff(
+                    conversation=conversation,
+                    session_id=conversation.session_id,
+                )
+                clarification_reply = (
+                    "Thank you for confirming your details. Your information has been securely prepared "
+                    "for Trawellcare's CRM and matching engine. Please sign up or log in to book a consultation "
+                    "with a wellness curator or case manager who will review your tailored options."
+                    if language == "en" else
+                    "شكراً لتأكيد تفاصيلك. تم تجهيز بياناتك بأمان لنظام CRM ومحرك المطابقة في ترافيل كير. "
+                    "يرجى تسجيل الدخول أو إنشاء حساب لحجز استشارة مع منسق العافية أو مدير الحالة لمراجعة خياراتك المخصصة."
+                )
+            elif consent_type in ("NEGATIVE", "CONDITIONAL", "CONTRADICTORY", "DEFERRED"):
+                conversation.cp5_confirmed_at = None
+                clarification_reply = consent_note
 
         consent_granted = self._persist_conversational_data(
             conversation, text, language
@@ -214,13 +543,15 @@ class ChatService:
         chunks: list[KnowledgeChunk] = []
         reply: str | None = None
 
-        if clarification_reply is not None:
-            reply = clarification_reply
-        elif submission is not None:
+        if submission is not None:
             reply = (
                 "Your consultation request has been submitted successfully and is "
                 f"pending coordinator confirmation. Reference: {submission.id}."
+                if language == "en" else
+                f"تم إرسال طلب الاستشارة بنجاح وهو قيد تأكيد المنسق. الرقم المرجعي: {submission.id}."
             )
+        elif clarification_reply is not None:
+            reply = clarification_reply
         elif decision.reason == "out_of_scope":
             reply = _out_of_scope(language)
         elif decision.reply:
@@ -341,11 +672,19 @@ class ChatService:
                     reply = " ".join(declarative).strip() if declarative else reply
             reply = append_planned_question(reply, plan)
 
-        # Prepend opening greeting only on the user's first message
-        if prior_user_message_count == 0:
+        # Prepend opening greeting only on the user's first message if not an emergency or crisis
+        if prior_user_message_count == 0 and not decision.escalation_required and decision.reason not in ("possible_emergency", "crisis_self_harm", "EF-9", "EF-10"):
             reply = _opening(language) + reply
 
         assistant_message = self.store.append_message(conversation, "assistant", reply, language)
+        global_audit_store.log_transcript(
+            session_id=conversation.session_id,
+            conversation_id=conversation.id,
+            sequence=len(conversation.messages),
+            role="assistant",
+            content=reply,
+            language=language,
+        )
         sources = []
         if submission is None and not decision.reply and decision.reason is None and chunks:
             sources = [
@@ -386,6 +725,9 @@ class ChatService:
                 else progress.request_status
             ),
             "consultation": submission,
+            "coordinator_handoff": self.store.get_handoff_for_conversation(conversation.id),
+            "programme_enquiry": self.store.get_programme_enquiry_for_conversation(conversation.id),
+            "service_category": "international_medical_travel",
         }
         result["suggested_actions"] = result["suggestions"]
         self.store.cache_chat(conversation.id, client_message_id, result)
@@ -401,6 +743,9 @@ class ChatService:
             re.IGNORECASE,
         )
         if not submit_intent or conversation.consultation_id:
+            return None
+        # CP-5 & DP-2: Must have explicit confirmation before transmission to CRM/matching engine
+        if not getattr(conversation, "cp5_confirmed_at", None):
             return None
         if not self.store.has_valid_consent(
             conversation.session_id, "consultation_processing"
@@ -425,12 +770,16 @@ class ChatService:
         self, conversation: Conversation, text: str, language: str
     ) -> bool:
         """Persist explicit consent and complete lead details."""
-        consent_pattern = re.compile(
+        consent_type, _ = global_policy_engine.evaluate_cp5_consent(text, language)
+        explicit_consent_phrase = bool(re.search(
             r"\b(i consent|i agree|yes,? submit|go ahead|process my details|"
-            r"submit the request|i approve)\b|أوافق|موافق|أرسل الطلب|معالجة بياناتي",
-            re.IGNORECASE,
-        )
-        if consent_pattern.search(text) and not self.store.has_valid_consent(
+            r"submit the request|i approve|yes,? share (?:my )?details)\b|أوافق|موافق|أرسل الطلب|معالجة بياناتي",
+            text,
+            re.I
+        ))
+        is_awaiting = conversation.state in ("awaiting_consent", "ready_for_submission", "offering_consultation", "pending_submission")
+
+        if consent_type == "AFFIRMATIVE" and (explicit_consent_phrase or is_awaiting) and not self.store.has_valid_consent(
             conversation.session_id, "consultation_processing"
         ):
             self.store.record_consent(
@@ -438,6 +787,15 @@ class ChatService:
                 {
                     "consent_type": "consultation_processing",
                     "granted": True,
+                    "policy_version": "consultation_v1",
+                },
+            )
+        elif consent_type == "NEGATIVE":
+            self.store.record_consent(
+                conversation.session_id,
+                {
+                    "consent_type": "consultation_processing",
+                    "granted": False,
                     "policy_version": "consultation_v1",
                 },
             )
@@ -670,7 +1028,7 @@ class ChatService:
                     r"ophthalmology|pediatrics|endocrinology|nephrology|urology|gastroenterology|"
                     r"pulmonology|rheumatology|hematology|psychiatry|gynecology|obstetrics|"
                     r"dentistry|dental|dental implants|heart treatment|treatment for my heart|"
-                    r"knee replacement|spine surgery|hair transplant|bariatric|cosmetic)\b|"
+                    r"knee replacement|knee surgery|spine surgery|hair transplant|bariatric|cosmetic)\b|"
                     r"\b[a-zA-Z]{3,}(?:ology|iatry|ics|surgery|therapy|plasty)\b",
                     clean_sub or clean or text,
                     re.IGNORECASE,
@@ -802,6 +1160,99 @@ class ChatService:
                 field_name="preferred_contact_method", value="email",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
+            updates.append(FactValue(
+                field_name="contact_channel_preference", value="email",
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
+            ))
+        elif re.search(r"\bwhatsapp\b", text, re.IGNORECASE):
+            updates.append(FactValue(
+                field_name="contact_channel_preference", value="whatsapp",
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
+            ))
+
+        # Appendix A additional administrative & preference fields
+        # Urgency / waiting-time context
+        if re.search(r"\b(waiting list|waiting time|waiting for \d+|urgent|asap|waiting [0-9]+ months?)\b", text, re.I):
+            urgency_m = re.search(r"\b(waiting list|waiting time|waiting for \d+ months?|urgent|asap|waiting [0-9]+ months?)\b", text, re.I)
+            updates.append(FactValue(
+                field_name="urgency_waiting_time_context", value=urgency_m.group(0),
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
+            ))
+
+        # Insurance coverage status
+        if re.search(r"\b(no insurance|not covered|without insurance|self[- ]pay|uninsured)\b", text, re.I):
+            updates.append(FactValue(
+                field_name="insurance_coverage_status", value="not_covered",
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
+            ))
+        elif re.search(r"\b(have insurance|covered by insurance|insurance covered|insured)\b", text, re.I):
+            updates.append(FactValue(
+                field_name="insurance_coverage_status", value="covered",
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
+            ))
+
+        # Value priority
+        if re.search(r"\b(cost[- ]effective(?:ness)?|affordable|budget[- ]friendly|save money|lowest cost)\b", text, re.I):
+            updates.append(FactValue(
+                field_name="value_priority", value="cost-effectiveness",
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
+            ))
+        elif re.search(r"\b(comfort|luxury|premium|five star)\b", text, re.I):
+            updates.append(FactValue(
+                field_name="value_priority", value="comfort",
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
+            ))
+        elif re.search(r"\b(best[- ]available service|top quality|best service|best care)\b", text, re.I):
+            updates.append(FactValue(
+                field_name="value_priority", value="best-available service",
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
+            ))
+        elif re.search(r"\b(speed|fastest|quickest|immediate)\b", text, re.I):
+            updates.append(FactValue(
+                field_name="value_priority", value="speed",
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
+            ))
+
+        # Concierge requirements
+        if re.search(r"\b(concierge|vip|fast[- ]track|personal guide)\b", text, re.I):
+            updates.append(FactValue(
+                field_name="concierge_requirements", value="VIP / fast-track concierge requested",
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
+            ))
+
+        # Visa requirement needs
+        if re.search(r"\b(need visa|visa support|visa assistance|visa help)\b", text, re.I):
+            updates.append(FactValue(
+                field_name="visa_requirement_needs", value="Visa coordination support needed",
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
+            ))
+
+        # Air ambulance requirement flag
+        if re.search(r"\bair ambulance\b", text, re.I):
+            updates.append(FactValue(
+                field_name="air_ambulance_requirement", value=True,
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
+            ))
+
+        # Canonical Appendix A mappings
+        canonical_additions: list[FactValue] = []
+        for f in updates:
+            if f.field_name == "procedure_or_service" and not any(x.field_name == "service_procedure_category" for x in updates):
+                canonical_additions.append(FactValue(field_name="service_procedure_category", value=f.value, status=f.status, source_message_id=message_id, confidence=f.confidence))
+            elif f.field_name == "customer_category" and not any(x.field_name == "trip_type" for x in updates):
+                trip_val = "medical" if f.value == "medical_treatment" else "wellness"
+                canonical_additions.append(FactValue(field_name="trip_type", value=trip_val, status=f.status, source_message_id=message_id, confidence=f.confidence))
+            elif f.field_name == "destination_preference" and not any(x.field_name == "preferred_destination" for x in updates):
+                canonical_additions.append(FactValue(field_name="preferred_destination", value=f.value, status=f.status, source_message_id=message_id, confidence=f.confidence))
+            elif f.field_name == "preferred_timing" and not any(x.field_name == "travel_dates_flexibility" for x in updates):
+                canonical_additions.append(FactValue(field_name="travel_dates_flexibility", value=f.value, status=f.status, source_message_id=message_id, confidence=f.confidence))
+            elif f.field_name == "budget_range" and not any(x.field_name == "total_budget_range" for x in updates):
+                canonical_additions.append(FactValue(field_name="total_budget_range", value=f.value, status=f.status, source_message_id=message_id, confidence=f.confidence))
+        updates.extend(canonical_additions)
+
+        # Prohibit capturing clinical PHI under HB-2 & DP-5
+        from .schemas.appendix_a import is_prohibited_clinical_field
+        updates = [f for f in updates if not is_prohibited_clinical_field(f.field_name)]
 
         return updates
 
@@ -821,6 +1272,69 @@ class ChatService:
             if isinstance(section, dict) and section.get(field) not in (None, ""):
                 return True
         return False
+
+    def _build_consultation_summary(self, conversation: Conversation, language: str) -> str:
+        facts = conversation.case_facts
+        collected_lines = []
+        cat = (
+            facts.get("service_procedure_category")
+            or facts.get("procedure_or_service")
+            or facts.get("wellness_programme_or_goal")
+        )
+        if cat:
+            label = "Service / Treatment" if facts.get("trip_type") != "wellness" else "Wellness Programme"
+            if language == "ar":
+                label = "الخدمة / الإجراء" if facts.get("trip_type") != "wellness" else "برنامج العافية"
+            collected_lines.append(f"• {label}: {cat}")
+
+        dest = facts.get("preferred_destination") or facts.get("destination_preference")
+        if dest:
+            collected_lines.append(f"• Preferred Destination: {dest}" if language == "en" else f"• الوجهة المفضلة: {dest}")
+
+        timing = facts.get("travel_dates_flexibility") or facts.get("preferred_timing")
+        if timing:
+            collected_lines.append(f"• Preferred Timing: {timing}" if language == "en" else f"• التوقيت المفضل: {timing}")
+
+        budget = facts.get("total_budget_range") or facts.get("budget_range")
+        if budget:
+            collected_lines.append(f"• Estimated Budget: {budget}" if language == "en" else f"• الميزانية التقديرية: {budget}")
+
+        if facts.get("hotel_accommodation_requirements"):
+            collected_lines.append(f"• Accommodation: {facts['hotel_accommodation_requirements']}" if language == "en" else f"• متطلبات الإقامة: {facts['hotel_accommodation_requirements']}")
+        if facts.get("transfer_requirements"):
+            collected_lines.append(f"• Transfers: {facts['transfer_requirements']}" if language == "en" else f"• خدمات النقل: {facts['transfer_requirements']}")
+        if facts.get("translation_service_needs"):
+            collected_lines.append(f"• Translation Support: {facts['translation_service_needs']}" if language == "en" else f"• خدمات الترجمة: {facts['translation_service_needs']}")
+
+        missing_optional = []
+        if not facts.get("hotel_accommodation_requirements"):
+            missing_optional.append("Hotel accommodation assistance" if language == "en" else "المساعدة في حجز الفندق أو الإقامة")
+        if not facts.get("transfer_requirements"):
+            missing_optional.append("Airport / local transfers" if language == "en" else "المواصلات من المطار")
+        if not facts.get("translation_service_needs"):
+            missing_optional.append("Medical translation" if language == "en" else "الترجمة الطبية")
+        if not budget:
+            missing_optional.append("Budget range" if language == "en" else "نطاق الميزانية")
+
+        collected_text = "\n".join(collected_lines) if collected_lines else ("(None collected yet)" if language == "en" else "(لم يتم تسجيل تفضيلات بعد)")
+        optional_text = ", ".join(missing_optional) if missing_optional else ("(None - all preferences specified)" if language == "en" else "(لا يوجد - جميع التفضيلات محددة)")
+
+        if language == "en":
+            return (
+                f"Here is a summary of your consultation preferences so far:\n\n"
+                f"{collected_text}\n\n"
+                f"Optional preferences not yet specified: {optional_text}.\n\n"
+                f"If you'd like to correct or change any detail, simply tell me (e.g., 'change destination to Germany'). "
+                f"When you are ready, please confirm if you would like me to share these preferences with Trawellcare's coordination team so an authorized coordinator can assist you."
+            )
+        else:
+            return (
+                f"إليك ملخص تفضيلات الاستشارة التي تم تسجيلها حتى الآن:\n\n"
+                f"{collected_text}\n\n"
+                f"تفضيلات اختيارية لم تُحدد بعد: {optional_text}.\n\n"
+                f"إذا كنت ترغب في تعديل أو تغيير أي معلومة، يمكنك إخباري مباشرة (مثل: 'تغيير الوجهة إلى ألمانيا'). "
+                f"وعندما تكون مستعداً، يرجى تأكيد موافقتك على مشاركة هذه التفضيلات مع فريق التنسيق في ترافيل كير ليتمكن منسق مختص من متابعة طلبك."
+            )
 
     def _suggestions(self, language: str, conversation: Conversation, decision, plan) -> list[ChatAction]:
         if decision.escalation_required or decision.reason == "out_of_scope":
@@ -871,6 +1385,9 @@ class ChatService:
         elif plan.target_field == "destination_preference":
             actions = [
                 ("india", "India", "I prefer India.", "answer the planned question"),
+                ("spain", "Spain", "I prefer Spain.", "answer the planned question"),
+                ("japan", "Japan", "I prefer Japan.", "answer the planned question"),
+                ("uae", "UAE", "I prefer the UAE.", "answer the planned question"),
                 ("compare_destinations", "Help me compare destinations", "Please help me compare destinations.", "answer the planned question"),
             ]
         elif plan.target_field == "preferred_timing":
@@ -906,6 +1423,36 @@ class ChatService:
                 "What is the status of my consultation request?" if language == "en" else "ما حالة طلب الاستشارة؟",
                 "pending coordinator review",
             )]
+        elif self._known(conversation, "procedure_or_service") or self._known(conversation, "wellness_programme_or_goal"):
+            actions = []
+            facts = conversation.case_facts
+            if not facts.get("hotel_accommodation_requirements"):
+                actions.append((
+                    "hotel_assistance",
+                    "Accommodation assistance" if language == "en" else "المساعدة في حجز الإقامة",
+                    "I will need hotel accommodation assistance." if language == "en" else "سأحتاج إلى مساعدة في حجز فندق أو إقامة.",
+                    "logistics option",
+                ))
+            if not facts.get("transfer_requirements"):
+                actions.append((
+                    "airport_transfers",
+                    "Airport transfers" if language == "en" else "خدمات التوصيل من المطار",
+                    "I would like airport transfer support." if language == "en" else "أرغب في الحصول على خدمة التوصيل من المطار.",
+                    "logistics option",
+                ))
+            if not facts.get("translation_service_needs"):
+                actions.append((
+                    "translation_support",
+                    "Translation support" if language == "en" else "خدمة الترجمة الطبية",
+                    "Will I have access to translation support?" if language == "en" else "هل تتوفر خدمة الترجمة اللغوية أو الطبية؟",
+                    "concierge option",
+                ))
+            actions.append((
+                "review_summary",
+                "Review my preferences" if language == "en" else "مراجعة ملخص تفضيلاتي",
+                "Can you show me a summary of my preferences so far?" if language == "en" else "هل يمكنك عرض ملخص لتفضيلاتي حتى الآن؟",
+                "consultation review",
+            ))
         elif self._known(conversation, "care_category") or self._known(conversation, "customer_category"):
             actions = [
                 ("prepare_documents", "What information should I prepare?" if language == "en" else "ما المعلومات التي أحتاج إلى تجهيزها؟",
@@ -930,7 +1477,7 @@ class ChatService:
                 if language == "en" else "أرغب في طلب استشارة.",
                 "consultation path",
             ))
-        limit = 4 if plan.target_field in {"procedure_or_service", "wellness_programme_or_goal"} else 2
+        limit = 4
         return [
             ChatAction(action_id=a, type="message", label=b, payload=c, relevance=d)
             for a, b, c, d in actions[:limit]

@@ -20,6 +20,13 @@ from supabase import Client, create_client
 from .config import Settings
 from .memory_store import Conversation, Lead, Message, Session, Consultation, MemoryStore
 from .schemas.consultation import ConsultationDetails, ConsultationStatus
+from .schemas.coordinator import CoordinatorHandoff, HandoffStatus
+from .schemas.programme import (
+    ContactConsentStatus,
+    EnquiryStatus,
+    RegistrationStatus,
+    SignatureProgrammeEnquiry,
+)
 from .schemas.intake import ConsultationProgress, FactValue, PersonaReadyProfile
 
 logger = logging.getLogger("hayat.supabase")
@@ -50,6 +57,8 @@ class SupabaseStore:
         self.client = client
         self._session_ttl = timedelta(hours=session_ttl_hours)
         self._idempotent_chat: dict[tuple[UUID, str], dict[str, object]] = {}
+        self._memory_handoffs: dict[UUID, CoordinatorHandoff] = {}
+        self._memory_programme_enquiries: dict[UUID, SignatureProgrammeEnquiry] = {}
 
     @staticmethod
     def hash_token(raw_token: str) -> str:
@@ -539,6 +548,157 @@ class SupabaseStore:
                             ConsultationStatus(data.get("status", "pending")),
                             submitted or datetime.now(UTC))
 
+    def save_coordinator_handoff(self, handoff: CoordinatorHandoff) -> CoordinatorHandoff:
+        self._memory_handoffs[handoff.id] = handoff
+        try:
+            row = {
+                "id": str(handoff.id),
+                "conversation_id": str(handoff.conversation_id),
+                "session_id": str(handoff.session_id),
+                "status": handoff.status.value,
+                "assigned_coordinator_id": handoff.assigned_coordinator_id,
+                "assigned_coordinator_name": handoff.assigned_coordinator_name,
+                "coordinator_role": handoff.coordinator_role,
+                "case_summary": handoff.case_summary,
+                "contact_channel": handoff.contact_channel,
+                "user_contact_authorized": handoff.user_contact_authorized,
+                "cp5_consent_verified": handoff.cp5_consent_verified,
+                "registered_user_verified": handoff.registered_user_verified,
+                "appointment_details": handoff.appointment_details,
+                "coordinator_notes": handoff.coordinator_notes,
+                "created_at": handoff.created_at.isoformat(),
+                "updated_at": handoff.updated_at.isoformat(),
+            }
+            self.client.table("coordinator_handoffs").upsert(row).execute()
+        except Exception as exc:
+            logger.warning("Could not persist coordinator handoff to Supabase: %s", exc)
+        return handoff
+
+    def get_coordinator_handoff(self, handoff_id: UUID | str) -> CoordinatorHandoff | None:
+        hid = _uuid(handoff_id)
+        try:
+            res = self.client.table("coordinator_handoffs").select("*").eq("id", str(hid)).execute()
+            if res.data:
+                row = res.data[0]
+                return CoordinatorHandoff(
+                    id=UUID(row["id"]),
+                    conversation_id=UUID(row["conversation_id"]),
+                    session_id=UUID(row["session_id"]),
+                    status=HandoffStatus(row["status"]),
+                    assigned_coordinator_id=row.get("assigned_coordinator_id"),
+                    assigned_coordinator_name=row.get("assigned_coordinator_name"),
+                    coordinator_role=row.get("coordinator_role"),
+                    case_summary=row.get("case_summary") or {},
+                    contact_channel=row.get("contact_channel"),
+                    user_contact_authorized=row.get("user_contact_authorized", False),
+                    cp5_consent_verified=row.get("cp5_consent_verified", False),
+                    registered_user_verified=row.get("registered_user_verified", False),
+                    appointment_details=row.get("appointment_details"),
+                    coordinator_notes=row.get("coordinator_notes") or [],
+                )
+        except Exception:
+            pass
+        return self._memory_handoffs.get(hid)
+
+    def get_handoff_for_conversation(self, conversation_id: UUID | str) -> CoordinatorHandoff | None:
+        cid = _uuid(conversation_id)
+        try:
+            res = self.client.table("coordinator_handoffs").select("*").eq("conversation_id", str(cid)).execute()
+            if res.data:
+                row = res.data[0]
+                return CoordinatorHandoff(
+                    id=UUID(row["id"]),
+                    conversation_id=UUID(row["conversation_id"]),
+                    session_id=UUID(row["session_id"]),
+                    status=HandoffStatus(row["status"]),
+                    assigned_coordinator_id=row.get("assigned_coordinator_id"),
+                    assigned_coordinator_name=row.get("assigned_coordinator_name"),
+                    coordinator_role=row.get("coordinator_role"),
+                    case_summary=row.get("case_summary") or {},
+                    contact_channel=row.get("contact_channel"),
+                    user_contact_authorized=row.get("user_contact_authorized", False),
+                    cp5_consent_verified=row.get("cp5_consent_verified", False),
+                    registered_user_verified=row.get("registered_user_verified", False),
+                    appointment_details=row.get("appointment_details"),
+                    coordinator_notes=row.get("coordinator_notes") or [],
+                )
+        except Exception:
+            pass
+        return next((h for h in self._memory_handoffs.values() if h.conversation_id == cid), None)
+
+    def save_programme_enquiry(self, enquiry: SignatureProgrammeEnquiry) -> SignatureProgrammeEnquiry:
+        self._memory_programme_enquiries[enquiry.enquiry_id] = enquiry
+        try:
+            payload = enquiry.model_dump(mode="json")
+            self.client.table("signature_programme_enquiries").upsert(payload).execute()
+        except Exception as exc:
+            logger.warning("Failed to persist programme enquiry to Supabase: %s", exc)
+        return enquiry
+
+    def get_programme_enquiry(self, enquiry_id: UUID | str) -> SignatureProgrammeEnquiry | None:
+        try:
+            eid = _uuid(enquiry_id)
+            res = self.client.table("signature_programme_enquiries").select("*").eq("enquiry_id", str(eid)).execute()
+            if res.data:
+                return SignatureProgrammeEnquiry.model_validate(res.data[0])
+            return self._memory_programme_enquiries.get(eid)
+        except Exception:
+            return self.get_programme_enquiry_by_reference_code(str(enquiry_id))
+
+    def get_programme_enquiry_by_reference_code(self, reference_code: str) -> SignatureProgrammeEnquiry | None:
+        code = reference_code.strip().upper()
+        # Check in-memory store first
+        for e in self._memory_programme_enquiries.values():
+            if e.reference_code and e.reference_code.upper() == code:
+                return e
+        try:
+            res = self.client.table("signature_programme_enquiries").select("*").eq("reference_code", code).execute()
+            if res.data:
+                return SignatureProgrammeEnquiry.model_validate(res.data[0])
+        except Exception:
+            pass
+        return None
+
+    def get_programme_enquiry_for_conversation(self, conversation_id: UUID | str) -> SignatureProgrammeEnquiry | None:
+        cid = _uuid(conversation_id)
+        try:
+            res = (
+                self.client.table("signature_programme_enquiries")
+                .select("*")
+                .eq("conversation_id", str(cid))
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if res.data:
+                return SignatureProgrammeEnquiry.model_validate(res.data[0])
+        except Exception:
+            pass
+        return next((e for e in self._memory_programme_enquiries.values() if e.conversation_id == cid), None)
+
+    def upsert_programme_enquiry(
+        self,
+        conversation_id: UUID | str,
+        session_id: UUID | str,
+        updates: dict[str, Any],
+    ) -> SignatureProgrammeEnquiry:
+        cid = _uuid(conversation_id)
+        sid = _uuid(session_id)
+        existing = self.get_programme_enquiry_for_conversation(cid)
+        if existing is None:
+            enquiry = SignatureProgrammeEnquiry(
+                conversation_id=cid,
+                session_id=sid,
+                **updates,
+            )
+        else:
+            data = existing.model_dump()
+            data.update(updates)
+            data["updated_at"] = datetime.now(UTC)
+            enquiry = SignatureProgrammeEnquiry.model_validate(data)
+        self.save_programme_enquiry(enquiry)
+        return enquiry
+
     def export_conversation(self, conversation: Conversation) -> dict[str, object]:
         if not conversation.messages:
             conversation = self.get_conversation(conversation.session_id, conversation.id)
@@ -559,6 +719,16 @@ class SupabaseStore:
             "persona_profile": self.persona_profile(conversation).model_dump(mode="json"),
             "conversation_state": conversation.state,
             "consultation": consultation,
+            "coordinator_handoff": (
+                handoff.model_dump(mode="json")
+                if (handoff := self.get_handoff_for_conversation(conversation.id))
+                else None
+            ),
+            "programme_enquiry": (
+                enquiry.model_dump(mode="json")
+                if (enquiry := self.get_programme_enquiry_for_conversation(conversation.id))
+                else None
+            ),
         }
 
 

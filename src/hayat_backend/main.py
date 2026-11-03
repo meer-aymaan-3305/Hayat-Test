@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from time import perf_counter
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from uuid import UUID
 
 from .config import SettingsError, get_settings
 from .chat_service import ChatService, greeting
@@ -23,10 +23,40 @@ from .otp import (
     UnavailableOTPProvider,
 )
 from .schemas import (
-    ChatRequest, ConsentCreate, ConsultationCreate, ConsultationDetails,
-    ConsultationResponse, ConversationCreate, OTPStartRequest, OTPStartResponse,
-    OTPVerifyRequest, GuestSessionCreate,
+    ChatRequest,
+    ConsentCreate,
+    ConsultationCreate,
+    ConsultationDetails,
+    ConsultationResponse,
+    ConversationCreate,
+    GuestSessionCreate,
+    OTPStartRequest,
+    OTPStartResponse,
+    OTPVerifyRequest,
 )
+from .schemas.coordinator import (
+    AppointmentConfirmationRequest,
+    CoordinatorAssignRequest,
+    CoordinatorHandoff,
+    CoordinatorProgressRequest,
+    HandoffStatusResponse,
+)
+from .coordinator_service import CoordinatorHandoffError, CoordinatorHandoffService
+from .language import detect_language
+from .programmes_catalog import PROGRAMMES_CATALOG, get_programme
+from .schemas.programme import (
+    ContactConsentStatus,
+    EnquiryStatus,
+    ProgrammeId,
+    RegistrationStatus,
+    SignatureProgrammeEnquiry,
+    SignatureProgrammeEnquiryCreate,
+    SignatureProgrammeEnquiryResponse,
+    SignatureProgrammeEnquiryUpdate,
+    SignatureProgrammeRegistrationRequest,
+)
+from .policy_engine import EF_SCRIPTS_EN, EF_SCRIPTS_AR
+from .audit_logging import global_audit_store
 
 logger = logging.getLogger("hayat")
 
@@ -73,6 +103,7 @@ def create_app(
         store, chat_service = _services()
     else:
         chat_service = ChatService(store, create_chat_model(settings))
+    coordinator_service = CoordinatorHandoffService(store, settings=settings)
     if otp_provider is not None:
         otp = otp_provider
     elif settings.firebase_api_key:
@@ -177,9 +208,46 @@ def create_app(
             conversation = store.get_conversation(x_session_id, payload.conversation_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
-        result = await chat_service.respond(
-            conversation, payload.message, payload.client_message_id
-        )
+        try:
+            result = await chat_service.respond(
+                conversation, payload.message, payload.client_message_id
+            )
+        except Exception as exc:
+            # UH-6 & EF-8: Integration or database failure during turn
+            logger.exception("Integration or database error during chat turn: %s", exc)
+            language = detect_language(payload.message)
+            scripts = EF_SCRIPTS_AR if language == "ar" else EF_SCRIPTS_EN
+            ef8_reply = scripts["EF-8"]
+            global_audit_store.log_fallback(
+                session_id=conversation.session_id,
+                conversation_id=conversation.id,
+                rule_id="EF-8",
+                trigger_type=f"database_integration_error:{type(exc).__name__}",
+            )
+            return {
+                "conversation_id": conversation.id,
+                "message_id": uuid4(),
+                "reply": ef8_reply,
+                "language": language,
+                "escalation_required": True,
+                "escalation_reason": "EF-8",
+                "sources": [],
+                "conversation_state": "escalated",
+                "next_action": "escalate",
+                "suggestions": [],
+                "suggested_actions": [],
+                "persona_profile": store.persona_profile(conversation),
+                "consultation_progress": store.consultation_progress(conversation),
+                "profile_summary": store.persona_profile(conversation),
+                "escalated": True,
+                "answer": ef8_reply,
+                "follow_up_question": None,
+                "follow_up_target": None,
+                "profile_updates": [],
+                "missing_required_fields": [],
+                "submission_status": "failed",
+                "consultation": None,
+            }
         return {
             "conversation_id": conversation.id,
             "message_id": result["assistant_message"].id,
@@ -203,6 +271,13 @@ def create_app(
             "missing_required_fields": result["missing_required_fields"],
             "submission_status": result["submission_status"],
             "consultation": result["consultation"],
+            "coordinator_handoff": result.get("coordinator_handoff"),
+            "programme_enquiry": (
+                result["programme_enquiry"].model_dump(mode="json")
+                if hasattr(result.get("programme_enquiry"), "model_dump")
+                else result.get("programme_enquiry")
+            ),
+            "service_category": result.get("service_category", "international_medical_travel"),
         }
 
     @app.get("/v1/conversations/{conversation_id}/messages", tags=["conversations"])
@@ -376,6 +451,217 @@ def create_app(
         if not payload.consent_given:
             missing.append("purpose_specific_consent")
         return {"valid": not missing, "missing_inputs": missing}
+
+    @app.get("/v1/conversations/{conversation_id}/handoff", response_model=HandoffStatusResponse, tags=["coordinator"])
+    async def get_conversation_handoff(
+        conversation_id: UUID,
+        x_session_id: UUID = Header(..., alias="X-Session-ID"),
+        x_session_token: str = Header(..., alias="X-Session-Token"),
+    ):
+        try:
+            store.authorize(x_session_id, x_session_token)
+            conversation = store.get_conversation(x_session_id, conversation_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
+
+        handoff = store.get_handoff_for_conversation(conversation.id)
+        if not handoff:
+            handoff = coordinator_service.initiate_handoff(conversation=conversation, session_id=x_session_id)
+
+        return HandoffStatusResponse(
+            id=handoff.id,
+            conversation_id=handoff.conversation_id,
+            status=handoff.status,
+            assigned_coordinator_name=handoff.assigned_coordinator_name,
+            coordinator_role=handoff.coordinator_role,
+            appointment_confirmed=bool(handoff.appointment_details is not None),
+            appointment_details=handoff.appointment_details,
+            updated_at=handoff.updated_at,
+        )
+
+    @app.get("/v1/coordinator/handoffs/{handoff_id}", response_model=CoordinatorHandoff, tags=["coordinator"])
+    async def get_coordinator_handoff(
+        handoff_id: UUID,
+        x_coordinator_role: str = Header(default="case_manager", alias="X-Coordinator-Role"),
+    ):
+        handoff = store.get_coordinator_handoff(handoff_id)
+        if not handoff:
+            raise HTTPException(status_code=404, detail="Handoff not found.")
+        return handoff
+
+    @app.post("/v1/coordinator/handoffs/{handoff_id}/assign", response_model=CoordinatorHandoff, tags=["coordinator"])
+    async def assign_coordinator(
+        handoff_id: UUID,
+        payload: CoordinatorAssignRequest,
+    ):
+        try:
+            return coordinator_service.assign_coordinator(
+                handoff_id=handoff_id,
+                coordinator_id=payload.coordinator_id,
+                coordinator_name=payload.coordinator_name,
+                role=payload.role,
+                notes=payload.notes,
+            )
+        except CoordinatorHandoffError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/v1/coordinator/handoffs/{handoff_id}/progress", response_model=CoordinatorHandoff, tags=["coordinator"])
+    async def update_coordinator_progress(
+        handoff_id: UUID,
+        payload: CoordinatorProgressRequest,
+        x_coordinator_id: str = Header(default="coord_101", alias="X-Coordinator-ID"),
+        x_coordinator_role: str = Header(default="case_manager", alias="X-Coordinator-Role"),
+    ):
+        try:
+            return coordinator_service.update_progress(
+                handoff_id=handoff_id,
+                status=payload.status,
+                coordinator_id=x_coordinator_id,
+                coordinator_role=x_coordinator_role,
+                notes=payload.notes,
+                contact_channel_used=payload.contact_channel_used,
+            )
+        except CoordinatorHandoffError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/coordinator/handoffs/{handoff_id}/confirm-appointment", response_model=CoordinatorHandoff, tags=["coordinator"])
+    async def confirm_appointment(
+        handoff_id: UUID,
+        payload: AppointmentConfirmationRequest,
+    ):
+        try:
+            return coordinator_service.confirm_appointment(
+                handoff_id=handoff_id,
+                coordinator_id=payload.coordinator_id,
+                coordinator_name=payload.coordinator_name,
+                appointment_time=payload.appointment_time,
+                provider_or_clinic=payload.provider_or_clinic,
+                mode=payload.mode,
+                notes=payload.notes,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except CoordinatorHandoffError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get(
+        "/v1/coordinator/programme-enquiries/{identifier}",
+        response_model=SignatureProgrammeEnquiry,
+        tags=["coordinator"],
+    )
+    async def get_coordinator_programme_enquiry(
+        identifier: str,
+        x_coordinator_id: str = Header(default="coord_101", alias="X-Coordinator-ID"),
+        x_coordinator_role: str = Header(default="case_manager", alias="X-Coordinator-Role"),
+    ):
+        """Allow authorized coordinators to retrieve a programme enquiry by ID or reference code."""
+        enquiry = None
+        try:
+            enquiry = store.get_programme_enquiry(UUID(identifier))
+        except (ValueError, AttributeError):
+            pass
+
+        if not enquiry and hasattr(store, "get_programme_enquiry_by_reference_code"):
+            enquiry = store.get_programme_enquiry_by_reference_code(identifier)
+
+        if not enquiry:
+            raise HTTPException(status_code=404, detail=f"Programme enquiry '{identifier}' not found.")
+        return enquiry
+
+    # =========================================================================
+    # Signature Wellness Programmes Endpoints (Separate Service Category)
+    # =========================================================================
+
+    @app.get("/v1/programmes", tags=["signature_programmes"])
+    async def list_programmes():
+        """List all official Trawellcare Signature Wellness Programmes."""
+        return [prog.model_dump(mode="json") for prog in PROGRAMMES_CATALOG.values()]
+
+    @app.get("/v1/programmes/{programme_id}", tags=["signature_programmes"])
+    async def get_programme_detail(programme_id: str):
+        """Get full details, themes, and FAQs for a specific signature programme."""
+        prog = get_programme(programme_id)
+        if not prog:
+            raise HTTPException(status_code=404, detail=f"Programme '{programme_id}' not found.")
+        return prog.model_dump(mode="json")
+
+    @app.post("/v1/programmes/enquiries", response_model=SignatureProgrammeEnquiry, tags=["signature_programmes"])
+    async def create_or_update_programme_enquiry(
+        payload: SignatureProgrammeEnquiryCreate,
+        x_session_id: UUID = Header(..., alias="X-Session-ID"),
+        x_session_token: str = Header(..., alias="X-Session-Token"),
+    ):
+        """Create or update an enquiry preference record for Signature Programmes."""
+        try:
+            store.authorize(x_session_id, x_session_token)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="Session access denied.") from exc
+
+        updates = payload.model_dump(exclude={"conversation_id", "session_id"}, exclude_unset=True)
+        enquiry = store.upsert_programme_enquiry(
+            conversation_id=payload.conversation_id,
+            session_id=payload.session_id,
+            updates=updates,
+        )
+        return enquiry
+
+    @app.get("/v1/conversations/{conversation_id}/programme-enquiry", response_model=SignatureProgrammeEnquiry, tags=["signature_programmes"])
+    async def get_conversation_programme_enquiry(
+        conversation_id: UUID,
+        x_session_id: UUID = Header(..., alias="X-Session-ID"),
+        x_session_token: str = Header(..., alias="X-Session-Token"),
+    ):
+        """Retrieve the Signature Programme enquiry associated with a conversation."""
+        try:
+            store.authorize(x_session_id, x_session_token)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="Session access denied.") from exc
+
+        enquiry = store.get_programme_enquiry_for_conversation(conversation_id)
+        if not enquiry:
+            raise HTTPException(status_code=404, detail="No programme enquiry found for conversation.")
+        return enquiry
+
+    @app.post("/v1/programmes/enquiries/{enquiry_id}/register-interest", response_model=SignatureProgrammeEnquiryResponse, tags=["signature_programmes"])
+    async def register_programme_interest(
+        enquiry_id: UUID,
+        payload: SignatureProgrammeRegistrationRequest,
+        x_session_id: UUID = Header(..., alias="X-Session-ID"),
+        x_session_token: str = Header(..., alias="X-Session-Token"),
+    ):
+        """Register interest for a tailored Signature Programme retreat proposal with consent."""
+        try:
+            store.authorize(x_session_id, x_session_token)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="Session access denied.") from exc
+
+        enquiry = store.get_programme_enquiry(enquiry_id)
+        if not enquiry:
+            raise HTTPException(status_code=404, detail="Programme enquiry not found.")
+
+        enquiry.lead_name = payload.full_name
+        enquiry.lead_phone = payload.phone_number
+        enquiry.lead_email = payload.email
+        enquiry.preferred_contact_method = payload.preferred_contact_method
+        enquiry.contact_consent_status = (
+            ContactConsentStatus.GRANTED if payload.contact_consent else ContactConsentStatus.REFUSED
+        )
+        enquiry.registration_status = RegistrationStatus.INTEREST_REGISTERED
+        enquiry.enquiry_status = EnquiryStatus.SUBMITTED
+        enquiry.updated_at = datetime.now(UTC)
+
+        store.save_programme_enquiry(enquiry)
+
+        summary_text = (
+            f"Thank you, {payload.full_name}! Your interest in {enquiry.primary_programme or 'Signature Programmes'} "
+            "has been registered. Registration is free and non-binding. Our coordination team will follow up."
+        )
+
+        return SignatureProgrammeEnquiryResponse(
+            enquiry=enquiry,
+            summary_text=summary_text,
+            coordinator_assigned=False,
+        )
 
     return app
 
