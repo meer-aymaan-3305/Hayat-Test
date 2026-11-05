@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient
 from hayat_backend.main import create_app
 from hayat_backend.memory_store import MemoryStore
 from hayat_backend.programmes_catalog import (
+    SIGNATURE_PROGRAMMES_INTRO_AR,
     ALL_THREE_INTEREST_EN,
     DATES_EXPLANATION_EN,
     DESTINATIONS_EXPLANATION_EN,
@@ -553,8 +554,13 @@ def test_fastapi_programme_endpoints(client):
     )
     assert res_reg.status_code == 200
     reg_body = res_reg.json()
-    assert reg_body["enquiry"]["lead_name"] == "Elena Rostova"
+    # Addendum 1.1 is unapproved, so the details are dropped and nothing is promised.
+    assert reg_body["enquiry"]["lead_name"] is None
+    assert reg_body["enquiry"]["lead_phone"] is None
+    assert reg_body["enquiry"]["lead_email"] is None
+    assert reg_body["enquiry"]["reference_code"].startswith("ENQ-")
     assert reg_body["enquiry"]["registration_status"] == "interest_registered"
+    assert "will not initiate unsolicited outreach" in reg_body["summary_text"]
 
 
 # =============================================================================
@@ -606,3 +612,47 @@ def test_programme_enquiry_reference_id_persistence_and_coordinator_retrieval(cl
         headers={"X-Coordinator-ID": "coord_longevity_1", "X-Coordinator-Role": "wellness_curator"},
     )
     assert res_unknown.status_code == 404
+
+
+# =============================================================================
+# Launch decisions: see docs/DECISIONS.md in the workspace root
+# =============================================================================
+
+def test_register_interest_is_limited_to_the_enquiry_owner(client):
+    session, conv, headers = _start_session(client)
+    enquiry = client.post(
+        "/v1/programmes/enquiries",
+        headers=headers,
+        json={"conversation_id": conv["id"], "session_id": session["session_id"], "primary_programme": "aafiya"},
+    ).json()
+    _, _, other_headers = _start_session(client)
+    res = client.post(f"/v1/programmes/enquiries/{enquiry['enquiry_id']}/register-interest", headers=other_headers, json={})
+    assert res.status_code == 404
+
+
+def test_aafiya_only_offers_its_approved_destinations(client):
+    _, conv, headers = _start_session(client)
+    reply = client.post("/v1/chat", headers=headers, json={"conversation_id": conv["id"], "message": "Tell me about AAfiya"}).json()
+    reply = client.post("/v1/chat", headers=headers, json={"conversation_id": conv["id"], "message": "Yoga please"}).json()
+    labels = {action["label"] for action in reply["suggested_actions"]}
+    assert "Spain" not in labels and "United States" not in labels
+    assert {"UAE", "India", "Japan", "Singapore"} <= labels
+    assert "Spain" not in reply["reply"]
+
+
+def test_arabic_keeps_programme_names_in_english_letters():
+    assert "HAYAT-100" in SIGNATURE_PROGRAMMES_INTRO_AR
+    assert "AAfiya" in SIGNATURE_PROGRAMMES_INTRO_AR
+    assert "FFounders" in SIGNATURE_PROGRAMMES_INTRO_AR
+
+
+@pytest.mark.parametrize("opening", ["Tell me about HAYAT-100", "Tell me about AAfiya", "Tell me about FFounders"])
+def test_pressing_a_suggestion_moves_on_instead_of_repeating_the_introduction(client, opening):
+    _, conv, headers = _start_session(client)
+    intro = client.post("/v1/chat", headers=headers, json={"conversation_id": conv["id"], "message": opening}).json()
+    assert intro["suggested_actions"]
+    for action in intro["suggested_actions"]:
+        _, fresh, fresh_headers = _start_session(client)
+        client.post("/v1/chat", headers=fresh_headers, json={"conversation_id": fresh["id"], "message": opening})
+        reply = client.post("/v1/chat", headers=fresh_headers, json={"conversation_id": fresh["id"], "message": action["payload"]}).json()
+        assert reply["suggested_actions"] != intro["suggested_actions"], action["label"]

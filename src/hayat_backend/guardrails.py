@@ -57,12 +57,12 @@ _INJECTION = re.compile(
 )
 _UNRELATED = re.compile(
     r"\b(recipe|bake|cake|cookies|chocolate cake|football|premier league|champions league|"
-    r"crypto|bitcoin|ethereum|solana|python code|programming|weather in|stock market|car repair)\b|"
+    r"crypto|bitcoin|ethereum|solana|python code|programming|weather|stock market|car repair)\b|"
     r"(كعكة|كيك|وصفة طعام|كرة قدم|كريبتو|بيتكوين|برمجة)",
     re.IGNORECASE,
 )
 _IN_SCOPE = re.compile(
-    r"\b(hayat|trawellcare|medical|treatment|dental|aesthetic|wellness|longevity|preventive|"
+    r"\b(hayat|trawellcare|medical|treatments?|abroad|dental|aesthetic|wellness|longevity|preventive|"
     r"recovery|travel|india|oman|uae|dubai|turkey|thailand|germany|uk|london|singapore|"
     r"destination|destinations|compare|comparison|clinic|hospital|consultation|coordinator|"
     r"service|services|visa|visas|budget|companion|booking|appointment|care|doctor|physician|"
@@ -248,6 +248,11 @@ def inspect_input(
         reason="out_of_scope",
         reply=scripts["EF-4"].format(step="planning your care or travel"),
     )
+
+
+def redact_message(text: str) -> str:
+    """The copy of a visitor's message that may be saved or sent to the AI."""
+    return global_policy_engine.redact_unsolicited_content(text)[0]
 
 
 def validate_output(text: str, language: str = "en") -> str:

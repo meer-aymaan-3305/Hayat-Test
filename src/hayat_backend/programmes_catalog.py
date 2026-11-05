@@ -23,9 +23,9 @@ SIGNATURE_PROGRAMMES_INTRO_EN: str = (
 
 SIGNATURE_PROGRAMMES_INTRO_AR: str = (
     "لدينا ثلاث تجارب عافية متميزة، كل منها مصمم حول جانب مختلف من جوانب العافية وجودة الحياة.\n\n"
-    "يركز برنامج حياة-100 على طول العمر والشيخوخة الصحية.\n\n"
-    "وعافية هي تجربة للياقة والعافية مخصصة للسيدات.\n\n"
-    "أما فاوندرز فهو منتجع للياقة والعافية التنفيذية مخصص لمؤسسي الشركات ورواد الأعمال والقادة.\n\n"
+    "يركز برنامج HAYAT-100 على طول العمر والشيخوخة الصحية.\n\n"
+    "وAAfiya هي تجربة للياقة والعافية مخصصة للسيدات.\n\n"
+    "أما FFounders فهو منتجع للياقة والعافية التنفيذية مخصص لمؤسسي الشركات ورواد الأعمال والقادة.\n\n"
     "تم تصميم كل برنامج كتجربة مدتها سبعة أيام، تشمل خمسة أيام من أنشطة المنتجع ويومين للسفر.\n\n"
     "هل لي أن أسأل أي من هذه البرامج يثير اهتمامك أكثر؟"
 )
@@ -43,14 +43,26 @@ PRICING_EXPLANATION_AR: str = (
 )
 
 DESTINATIONS_EXPLANATION_EN: str = (
-    "We are exploring premium retreat destinations across the Americas, Europe, the Middle East and Asia, "
+    "We are exploring premium retreat destinations across the Americas, Europe and Asia, "
     "including the United States, Spain, Japan, Singapore, India, and the United Arab Emirates. "
     "These destinations are currently being explored, and specific retreat facilities and dates are yet to be confirmed."
 )
 
 DESTINATIONS_EXPLANATION_AR: str = (
-    "نستكشف وجهات متميزة للمنتجعات في الأمريكتين وأوروبا والشرق الأوسط وآسيا، "
+    "نستكشف وجهات متميزة للمنتجعات في الأمريكتين وأوروبا وآسيا، "
     "بما في ذلك الولايات المتحدة وإسبانيا واليابان وسنغافورة والهند والإمارات العربية المتحدة. "
+    "هذه الوجهات قيد الاستكشاف حالياً، وسيتم تأكيد المواقع والمواعيد لاحقاً."
+)
+
+AAFIYA_DESTINATIONS_EXPLANATION_EN: str = (
+    "We are exploring inspiring retreat destinations across the Americas, Europe and Asia, "
+    "including the UAE, India, Japan and Singapore. "
+    "These destinations are currently being explored, and specific retreat facilities and dates are yet to be confirmed."
+)
+
+AAFIYA_DESTINATIONS_EXPLANATION_AR: str = (
+    "نستكشف وجهات ملهمة للمنتجعات في الأمريكتين وأوروبا وآسيا، "
+    "بما في ذلك الإمارات العربية المتحدة والهند واليابان وسنغافورة. "
     "هذه الوجهات قيد الاستكشاف حالياً، وسيتم تأكيد المواقع والمواعيد لاحقاً."
 )
 
@@ -155,6 +167,7 @@ PROGRAMMES_CATALOG: dict[ProgrammeId, ProgrammeDetail] = {
     ProgrammeId.AAFIYA: ProgrammeDetail(
         programme_id=ProgrammeId.AAFIYA,
         name="AAfiya",
+        candidate_destinations=["United Arab Emirates", "India", "Japan", "Singapore", "Other / Undecided"],
         tagline="Women's Fitness & Wellness Retreat",
         focus="A women-focused fitness and wellness retreat centring on movement, nutrition, self-care, and personal connection.",
         philosophy="Your journey. Your wellbeing. Your way.",

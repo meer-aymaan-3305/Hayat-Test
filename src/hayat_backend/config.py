@@ -21,6 +21,7 @@ class Settings(BaseModel):
 
     app_env: Literal["development", "test", "staging", "production"] = "development"
     log_level: str = "INFO"
+    jwt_system_secret: SecretStr | None = None
     groq_api_key: SecretStr | None = None
     groq_model: str = "allam-2-7b"
     supabase_url: str | None = None
@@ -34,6 +35,7 @@ class Settings(BaseModel):
     firebase_project_id: str | None = None
     firebase_service_account_json: SecretStr | None = None
     policy_addendum_1_1_approved: bool = False
+    medical_ai_replies: bool = False
     trawellcare_crm_webhook_url: str | None = None
 
     @property
@@ -80,6 +82,7 @@ def load_settings() -> Settings:
         settings = Settings(
             app_env=values.get("APP_ENV", "development"),
             log_level=values.get("LOG_LEVEL", "INFO"),
+            jwt_system_secret=values.get("JWT_SYSTEM_SECRET") or None,
             groq_api_key=values.get("GROQ_API_KEY"),
             groq_model=values.get("GROQ_MODEL", "allam-2-7b"),
             supabase_url=values.get("SUPABASE_URL"),
@@ -97,6 +100,7 @@ def load_settings() -> Settings:
             firebase_project_id=values.get("FIREBASE_PROJECT_ID"),
             firebase_service_account_json=values.get("FIREBASE_SERVICE_ACCOUNT_JSON"),
             policy_addendum_1_1_approved=values.get("POLICY_ADDENDUM_1_1_APPROVED", "false").lower() in ("true", "1", "yes"),
+            medical_ai_replies=values.get("MEDICAL_AI_REPLIES", "false").lower() in ("true", "1", "yes"),
             trawellcare_crm_webhook_url=values.get("TRAWELLCARE_CRM_WEBHOOK_URL"),
         )
         settings.validate_integrations()

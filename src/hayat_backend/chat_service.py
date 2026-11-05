@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import re
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from .guardrails import POLICY_VERSION, inspect_input, validate_output
+from .guardrails import POLICY_VERSION, inspect_input, redact_message, validate_output
 from .language import detect_language
 from .llm import ChatModel, LLMError
 from .memory_store import Conversation, MemoryStore
@@ -29,11 +30,38 @@ from .audit_logging import global_audit_store
 from .schemas.appendix_a import AppendixAIntakePayload, PERMITTED_FIELD_NAMES
 from .crm_client import CRMWebhookClient
 from .coordinator_service import CoordinatorHandoffService
-from .programme_service import ProgrammeConversationService
+from .programme_service import ARABIC_LABELS, SIGN_IN_REPLY_AR, SIGN_IN_REPLY_EN, ProgrammeConversationService, sign_in_action
 
 
 def _opening(language: str) -> str:
     return "مرحباً! " if language == "ar" else "Hello! "
+
+
+def _account_reply(step: str, language: str) -> str:
+    """What the website's visitors hear instead of being asked for contact details."""
+    if step == "sign_in_required":
+        return SIGN_IN_REPLY_AR if language == "ar" else SIGN_IN_REPLY_EN
+    if language == "ar":
+        return "تم حفظ طلبك في حسابك، ويمكن لفريقنا الاطلاع على هذه المحادثة."
+    return "Your request is saved to your account, and our team can see this conversation."
+
+
+ARABIC_QUESTIONS = {
+    "What treatment or specialty would you like to explore?": "ما العلاج أو التخصص الذي ترغب في استكشافه؟",
+    "Which wellness programme or goal interests you?": "ما برنامج العافية أو الهدف الذي يهمك؟",
+    "Which destination would you prefer, or would you like help exploring available destinations?": "ما الوجهة التي تفضلها، أم ترغب في المساعدة في استكشاف الوجهات المتاحة؟",
+    "What timeframe would suit you best?": "ما الإطار الزمني الأنسب لك؟",
+    "How may I help with your consultation details?": "كيف يمكنني مساعدتك في تفاصيل استشارتك؟",
+    "Would you like help with a medical treatment or a wellness programme?": "هل تود المساعدة في علاج طبي أم في برنامج عافية؟",
+    "Would you like to request a consultation with a coordinator using these details?": "هل ترغب في طلب استشارة مع منسق بناءً على هذه التفاصيل؟",
+}
+
+
+def _clarify(language: str) -> str:
+    """Used when the AI gave no reply, so it mustn't call the request out of scope."""
+    if language == "ar":
+        return "هل تود المساعدة في علاج طبي أم في برنامج عافية؟"
+    return "Would you like help with a medical treatment or a wellness programme?"
 
 
 def _out_of_scope(language: str) -> str:
@@ -118,9 +146,16 @@ class ChatService:
         ]
 
     async def respond(
-        self, conversation: Conversation, text: str, client_message_id: str | None = None
+        self,
+        conversation: Conversation,
+        text: str,
+        client_message_id: str | None = None,
+        visitor: str | None = None,
+        contactable: bool = False,
+        reply_language: str | None = None,
+        use_ai: bool = True,
     ) -> dict[str, object]:
-        language = detect_language(text)
+        language = reply_language or detect_language(text)
         cached = self.store.cached_chat(conversation.id, client_message_id)
         if cached:
             return cached
@@ -148,14 +183,14 @@ class ChatService:
                 rule_id="EF-9",
                 incident_type="medical_emergency",
             )
-            u_msg = self.store.append_message(conversation, "user", text, language)
+            u_msg = self.store.append_message(conversation, "user", redact_message(text), language)
             a_msg = self.store.append_message(conversation, "assistant", reply, language)
             global_audit_store.log_transcript(
                 session_id=conversation.session_id,
                 conversation_id=conversation.id,
                 sequence=len(conversation.messages) - 1,
                 role="user",
-                content=text,
+                content=redact_message(text),
                 language=language,
             )
             global_audit_store.log_transcript(
@@ -201,14 +236,14 @@ class ChatService:
                 rule_id="EF-10",
                 incident_type="crisis_self_harm",
             )
-            u_msg = self.store.append_message(conversation, "user", text, language)
+            u_msg = self.store.append_message(conversation, "user", redact_message(text), language)
             a_msg = self.store.append_message(conversation, "assistant", reply, language)
             global_audit_store.log_transcript(
                 session_id=conversation.session_id,
                 conversation_id=conversation.id,
                 sequence=len(conversation.messages) - 1,
                 role="user",
-                content=text,
+                content=redact_message(text),
                 language=language,
             )
             global_audit_store.log_transcript(
@@ -256,13 +291,13 @@ class ChatService:
         pending_field = self.question_planner.current_pending_field(conversation)
 
         # Append user message and log transcript
-        user_message = self.store.append_message(conversation, "user", text, language)
+        user_message = self.store.append_message(conversation, "user", redact_message(text), language)
         global_audit_store.log_transcript(
             session_id=conversation.session_id,
             conversation_id=conversation.id,
             sequence=len(conversation.messages),
             role="user",
-            content=text,
+            content=redact_message(text),
             language=language,
         )
 
@@ -325,6 +360,8 @@ class ChatService:
                 conversation=conversation,
                 text=text,
                 language=language,
+                visitor=visitor,
+                contactable=contactable,
             )
             reply = prog_result["reply"]
             if prior_user_message_count == 0 and not reply.startswith("Hello") and not reply.startswith("مرحباً"):
@@ -510,7 +547,7 @@ class ChatService:
                     conversation=conversation,
                     session_id=conversation.session_id,
                 )
-                clarification_reply = (
+                clarification_reply = _account_reply("account_request_saved", language) if visitor == "customer" else (
                     "Thank you for confirming your details. Your information has been securely prepared "
                     "for Trawellcare's CRM and matching engine. Please sign up or log in to book a consultation "
                     "with a wellness curator or case manager who will review your tailored options."
@@ -530,7 +567,7 @@ class ChatService:
         )
         progress = self.store.consultation_progress(conversation)
         plan = self.question_planner.plan(
-            text=text, conversation=conversation, decision=decision, progress=progress
+            text=text, conversation=conversation, decision=decision, progress=progress, visitor=visitor
         )
         if submission is not None:
             plan = type(plan)(
@@ -577,6 +614,7 @@ class ChatService:
                 "You are Hayat, a concise bilingual coordination assistant for medical travel and wellness.\n"
                 "CRITICAL POLICIES:\n"
                 "1. Ask at most ONE question in your response. Never ask multiple questions.\n"
+                "0. NEVER name, recommend, rank or compare hospitals, clinics, doctors, countries or treatments, even if asked. Say a case manager will prepare options.\n"
                 "2. Do NOT promise or offer to find or recommend specific individual doctors or cardiologists. Hayat coordinates with accredited partner hospital departments; human coordinators review requests.\n"
                 "3. Do NOT claim to check live provider or doctor availability, send document upload links, or confirm live bookings.\n"
                 "4. Do NOT state that specific medical records or imaging files are mandatory; they are helpful if available.\n"
@@ -601,14 +639,14 @@ class ChatService:
             if knowledge:
                 system += f"\nApproved evidence:\n{knowledge}"
             try:
-                generated = await self.model.complete(
+                generated = None if not use_ai else await self.model.complete(
                     [
                         {"role": "system", "content": system},
                         *prior_history,
-                        {"role": "user", "content": text},
+                        {"role": "user", "content": redact_message(text)},
                     ]
                 )
-                reply = validate_output(generated)
+                reply = validate_output(generated, language) if generated else None
             except (LLMError, TypeError, ValueError):
                 reply = None
 
@@ -617,10 +655,10 @@ class ChatService:
             lower_text = text.lower()
             if "compare" in lower_text or "destination" in lower_text or "مقارن" in text or "وجه" in text:
                 reply = (
-                    "India offers world-class tertiary care with significant cost advantages in accredited hospital departments for cardiology and orthopedics. "
-                    "Oman and the UAE provide advanced facilities for specialized wellness and preventive care, while Thailand is renowned for holistic wellness retreats."
+                    "A case manager can compare destinations with you once we understand your preferences. "
+                    "Which destination are you considering?"
                     if language == "en" else
-                    "تتميز الهند بمستشفيات معتمدة دولياً وتكلفة مناسبة في أقسام جراحة القلب والعظام. وتقدم سلطنة عمان والإمارات مرافق متطورة في برامج العافية والفحوصات، بينما تشتهر تايلاند بالسياحة العلاجية المتكاملة."
+                    "يمكن لمدير الحالة مقارنة الوجهات معك بعد فهم تفضيلاتك. ما الوجهة التي تفكر فيها؟"
                 )
             elif "prepare" in lower_text or "document" in lower_text or "information" in lower_text or "تجهيز" in text or "مستند" in text:
                 reply = (
@@ -661,7 +699,7 @@ class ChatService:
                         else f"مفهوم — أنت مهتم ببرنامج {wellness_goal}."
                     )
                 else:
-                    reply = _out_of_scope(language)
+                    reply = _clarify(language)
 
         # Single composition layer: Append the planned question only if not already present
         if clarification_reply is None and not decision.reply and submission is None and decision.reason != "out_of_scope":
@@ -670,7 +708,12 @@ class ChatService:
                     sentences = re.split(r"(?<=[.!?؟])\s+", reply.strip())
                     declarative = [s for s in sentences if "?" not in s and "؟" not in s]
                     reply = " ".join(declarative).strip() if declarative else reply
-            reply = append_planned_question(reply, plan)
+            planned = plan
+            if language == "ar" and plan.question_text in ARABIC_QUESTIONS:
+                planned = replace(plan, question_text=ARABIC_QUESTIONS[plan.question_text])
+            reply = append_planned_question(reply, planned)
+        if plan.decision_type in {"account_request_saved", "sign_in_required"}:
+            reply = _account_reply(plan.decision_type, language)
 
         # Prepend opening greeting only on the user's first message if not an emergency or crisis
         if prior_user_message_count == 0 and not decision.escalation_required and decision.reason not in ("possible_emergency", "crisis_self_harm", "EF-9", "EF-10"):
@@ -1024,7 +1067,7 @@ class ChatService:
                 "wellness", "a wellness", "consultation", "",
             }:
                 specialty_match = re.search(
-                    r"\b(cardiology|orthopedics|orthopaedics|dermatology|oncology|neurology|"
+                    r"\b(cardiology|orthopedics|orthopaedics|dermatology|oncology|neurology|fertility|ivf|"
                     r"ophthalmology|pediatrics|endocrinology|nephrology|urology|gastroenterology|"
                     r"pulmonology|rheumatology|hematology|psychiatry|gynecology|obstetrics|"
                     r"dentistry|dental|dental implants|heart treatment|treatment for my heart|"
@@ -1337,6 +1380,10 @@ class ChatService:
             )
 
     def _suggestions(self, language: str, conversation: Conversation, decision, plan) -> list[ChatAction]:
+        if plan.decision_type == "sign_in_required":
+            return [sign_in_action(language)]
+        if plan.decision_type == "account_request_saved":
+            return []
         if decision.escalation_required or decision.reason == "out_of_scope":
             return []
         actions: list[tuple[str, str, str, str]]
@@ -1479,7 +1526,13 @@ class ChatService:
             ))
         limit = 4
         return [
-            ChatAction(action_id=a, type="message", label=b, payload=c, relevance=d)
+            ChatAction(
+                action_id=a,
+                type="message",
+                label=ARABIC_LABELS.get(b, b) if language == "ar" else b,
+                payload=c,
+                relevance=d,
+            )
             for a, b, c, d in actions[:limit]
         ]
 

@@ -24,6 +24,8 @@ from .programmes_catalog import (
     ALL_THREE_INTEREST_EN,
     DATES_EXPLANATION_AR,
     DATES_EXPLANATION_EN,
+    AAFIYA_DESTINATIONS_EXPLANATION_AR,
+    AAFIYA_DESTINATIONS_EXPLANATION_EN,
     DESTINATIONS_EXPLANATION_AR,
     DESTINATIONS_EXPLANATION_EN,
     PRICING_EXPLANATION_AR,
@@ -76,6 +78,176 @@ _SKIP_KEYWORDS_RE = re.compile(
 )
 
 
+# Pending review by an Arabic speaker. See docs/HAYAT_POLICY_REGISTER.md.
+ARABIC_LABELS = {
+    "Spain": "إسبانيا",
+    "Japan": "اليابان",
+    "United States": "الولايات المتحدة",
+    "UAE": "الإمارات",
+    "Singapore": "سنغافورة",
+    "India": "الهند",
+    "Undecided / Open": "لم أقرر بعد",
+    "HAYAT-100 (Longevity)": "HAYAT-100 (طول العمر)",
+    "AAfiya (Women's Wellness)": "AAfiya (عافية السيدات)",
+    "FFounders (Executive Wellness)": "FFounders (عافية التنفيذيين)",
+    "Change destination": "تغيير الوجهة",
+    "Change timing": "تغيير الموعد",
+    "Curated peer connections": "التواصل مع الأقران",
+    "Explore medical travel": "استكشاف السفر العلاجي",
+    "Explore proposals first": "الاطلاع على المقترحات أولًا",
+    "Fitness & mobility": "اللياقة والحركة",
+    "Flexible on dates": "مرن في التواريخ",
+    "Flexible on timing": "مرن في التوقيت",
+    "Focus on wellbeing": "التركيز على العافية",
+    "How is pricing determined?": "كيف يُحدد السعر؟",
+    "I'm interested in all three": "أنا مهتم بالبرامج الثلاثة",
+    "Individual / Solo": "بمفردي",
+    "Lifestyle & nutrition": "نمط الحياة والتغذية",
+    "Next 3 months": "خلال 3 أشهر",
+    "Next 6 months": "خلال 6 أشهر",
+    "Pilates & yoga": "البيلاتس واليوغا",
+    "Register my interest": "تسجيل اهتمامي",
+    "Restorative break": "استراحة للاستجمام",
+    "Review my summary": "مراجعة الملخص",
+    "Self-care workshops": "ورش العناية الذاتية",
+    "Sleep & recovery": "النوم والتعافي",
+    "Strength & conditioning": "القوة واللياقة",
+    "Stress & recovery": "التوتر والتعافي",
+    "With colleagues": "مع الزملاء",
+    "With spouse / friend": "مع الزوج أو صديق",
+    "United Arab Emirates": "الإمارات العربية المتحدة",
+    "Other / Undecided": "لم أقرر بعد",
+    "Pilates & core strength": "البيلاتس وقوة الجذع",
+    "Yoga & stretching": "اليوغا والتمدد",
+    "Longevity & healthy ageing awareness": "التوعية بطول العمر والشيخوخة الصحية",
+    "Nutrition & healthy dining habits": "التغذية وعادات الأكل الصحية",
+    "Guided fitness & mobility": "اللياقة والحركة بإشراف مختص",
+    "Mindfulness & lifestyle awareness": "اليقظة الذهنية والتوعية بأسلوب الحياة",
+    "Curated peer discussions": "نقاشات مختارة مع الأقران",
+    "Next 3 Months": "خلال 3 أشهر",
+    "Next 6 Months": "خلال 6 أشهر",
+    "Flexible": "مرن",
+    "Flexible / Still exploring timing": "مرن / ما زلت أستكشف التوقيت",
+    "Solo / Individual": "بمفردي",
+    "To be evaluated with tailored proposal": "يُحدد مع المقترح المخصص",
+    "To be evaluated with proposal": "يُحدد مع المقترح",
+    "Open / Undecided (candidate market under exploration)": "لم تحدد بعد (قيد الاستكشاف)",
+    "Help me compare destinations": "ساعدني في مقارنة الوجهات",
+    "Next three months": "خلال ثلاثة أشهر",
+    "I am still exploring timing": "ما زلت أستكشف التوقيت",
+    "Accommodation assistance": "المساعدة في الإقامة",
+    "Airport transfers": "النقل من المطار وإليه",
+    "Translation support": "دعم الترجمة",
+}
+
+_DESTINATION_ACTIONS = {
+    "Spain": ("dest_spain", "Spain", "I prefer Spain."),
+    "Japan": ("dest_japan", "Japan", "I prefer Japan."),
+    "United States": ("dest_us", "United States", "I prefer the United States."),
+    "United Arab Emirates": ("dest_uae", "UAE", "I prefer the UAE."),
+    "Singapore": ("dest_singapore", "Singapore", "I prefer Singapore."),
+    "India": ("dest_india", "India", "I prefer India."),
+    "Other / Undecided": ("dest_flexible", "Undecided / Open", "I am open to exploring any suitable destination."),
+}
+
+
+def _destination_actions(enquiry: SignatureProgrammeEnquiry) -> list[ChatAction]:
+    """Offer only the destinations approved for the visitor's programme."""
+    return [
+        ChatAction(action_id=action_id, type="message", label=label, payload=payload, relevance="destination")
+        for action_id, label, payload in (
+            _DESTINATION_ACTIONS[name]
+            for name in get_programme(ProgrammeId(enquiry.primary_programme)).candidate_destinations
+        )
+    ]
+
+
+SIGN_IN_REPLY_EN = (
+    "To take this further, please sign in or create a free account. "
+    "This chat will move to your account, so you won't need to repeat anything."
+)
+SIGN_IN_REPLY_AR = (
+    "للمتابعة، يُرجى تسجيل الدخول أو إنشاء حساب مجاني. "
+    "ستنتقل هذه المحادثة إلى حسابك، فلن تحتاج إلى تكرار أي شيء."
+)
+
+
+def sign_in_action(language: str) -> ChatAction:
+    """A button the website turns into a link to its sign-in page."""
+    label = "تسجيل الدخول أو إنشاء حساب" if language == "ar" else "Sign in or create an account"
+    return ChatAction(action_id="sign_in", type="sign_in", label=label, payload="sign_in", relevance="account")
+
+
+def assign_reference_code(enquiry: SignatureProgrammeEnquiry) -> None:
+    """Give a registered enquiry its reference number, once."""
+    if not enquiry.reference_code:
+        enquiry.reference_code = f"ENQ-{str(enquiry.enquiry_id)[:8].upper()}"
+
+
+def _programme_name(enquiry: SignatureProgrammeEnquiry) -> str:
+    try:
+        return get_programme(ProgrammeId(enquiry.primary_programme)).name
+    except ValueError:
+        return "Signature Wellness Programmes"
+
+
+def registration_reply(
+    enquiry: SignatureProgrammeEnquiry,
+    language: str,
+    visitor: str | None = None,
+    contactable: bool = False,
+) -> str:
+    """Confirm a registration, promising follow-up only if contact is possible."""
+    prog_display = _programme_name(enquiry)
+    if visitor == "customer":
+        if language == "ar":
+            follow_up = "سيراجع فريقنا تفضيلاتك ويتواصل معك عبر بيانات حسابك." if contactable else "سيراجع فريقنا تفضيلاتك."
+            return (
+                f"تم تسجيل اهتمامك في {prog_display} وحفظه في حسابك ضمن برامجي.\n\n"
+                f"هذا التسجيل مجاني ولا يترتب عليه أي التزام أو حجز. {follow_up}"
+            )
+        follow_up = (
+            "Our team will review your preferences and contact you using your account details."
+            if contactable else "Our team will review your preferences."
+        )
+        return (
+            f"Your interest in {prog_display} is registered and saved to your account under My Programmes.\n\n"
+            f"This is free and non-binding, and it isn't a booking. {follow_up}"
+        )
+    has_authorized_contact = bool(enquiry.lead_phone or enquiry.lead_email)
+
+    if language == "ar":
+        if has_authorized_contact:
+            contact_msg = "سيقوم منسق العافية المعتمد بمراجعة خيارات المقترح والتواصل معك عبر وسيلة التواصل المسجلة."
+        else:
+            contact_msg = (
+                "نظراً لعدم جمع أي بيانات اتصال شخصية في هذه المحادثة، فلن يبدأ منسقو العافية تواصلاً مباشراً تلقائياً. "
+                "يمكنك الاحتفاظ بالرقم المرجعي أعلاه واستخدامه عند التواصل معنا أو استكمال تسجيل وسيلة التواصل عبر بوابتنا الآمنة."
+            )
+        reply = (
+            f"تم تسجيل اهتمامك بنجاح في {prog_display}! (الرقم المرجعي: {enquiry.reference_code})\n\n"
+            "هذا التسجيل مجاني تماماً ولا يترتب عليه أي التزام مالي أو حجز تلقائي. "
+            "سيقوم فريق تنسيق العافية بدراسة تفضيلاتك وتجهيز مقترح مخصص عند اكتمال ترتيبات الوجهة والمواعيد.\n\n"
+            f"{contact_msg}"
+        )
+    else:
+        if has_authorized_contact:
+            contact_msg = "An authorized wellness coordinator will review your proposal options and follow up via your registered contact method."
+        else:
+            contact_msg = (
+                "Because no personal contact details were requested or collected in this chat, "
+                "our team will not initiate unsolicited outreach. You may reference this registration code "
+                "whenever you choose to connect through our secure portal or authorized channels."
+            )
+        reply = (
+            f"Thank you! Your interest in {prog_display} has been successfully registered! (Reference: {enquiry.reference_code})\n\n"
+            "This registration of interest is completely free and non-binding. It is not an autonomous booking or charge. "
+            "Our wellness coordination team will review your curated preferences and evaluate tailored retreat options as partner arrangements and dates are finalised.\n\n"
+            f"{contact_msg}"
+        )
+    return reply
+
+
 class ProgrammeConversationService:
     """Manages dialogue state, preference extraction, and enquiry lifecycle
 
@@ -102,6 +274,8 @@ class ProgrammeConversationService:
         conversation: Conversation,
         text: str,
         language: str,
+        visitor: str | None = None,
+        contactable: bool = False,
     ) -> dict[str, Any]:
         """Process a message within the Signature Wellness Programmes category."""
         conversation.case_facts["service_category"] = "signature_programmes"
@@ -128,7 +302,7 @@ class ProgrammeConversationService:
         self.store.save_programme_enquiry(enquiry)
 
         # 3. Check for general FAQ queries (Pricing, Dates, Destinations, Accommodations, Flights)
-        faq_response = self._check_faq_queries(lower_text, language)
+        faq_response = self._check_faq_queries(lower_text, language, enquiry)
         if faq_response:
             reply = faq_response
             suggestions = self._contextual_next_suggestions(enquiry, language)
@@ -143,7 +317,7 @@ class ProgrammeConversationService:
         ))
 
         if register_intent or enquiry.current_stage in (ProgrammeStage.REGISTRATION_CONSENT, ProgrammeStage.REGISTERED_INTEREST):
-            return self._handle_registration_stage(enquiry, lower_text, language)
+            return self._handle_registration_stage(enquiry, lower_text, language, visitor, contactable)
 
         # B. Check if user requested summary review
         summary_intent = bool(re.search(
@@ -155,7 +329,7 @@ class ProgrammeConversationService:
 
         # C. Initial Programme Selection / Identification
         # If user selected or mentioned healthy ageing / longevity:
-        if re.search(r"\b(healthy ageing|healthy aging|longevity|hayat[- ]?100)\b|الشيخوخة الصحية|طول العمر|حياة[- ]?100", lower_text):
+        if enquiry.primary_programme != "hayat_100" and re.search(r"\b(healthy ageing|healthy aging|longevity|hayat[- ]?100)\b|الشيخوخة الصحية|طول العمر|حياة[- ]?100", lower_text):
             enquiry.primary_programme = "hayat_100"
             if "hayat_100" not in enquiry.interested_programmes:
                 enquiry.interested_programmes.append("hayat_100")
@@ -165,7 +339,7 @@ class ProgrammeConversationService:
             # Natural response identifying HAYAT-100 without repeating generic intro
             if language == "ar":
                 reply = (
-                    "يبدو أن برنامج حياة-100 هو البرنامج الأكثر توافقاً مع ما تبحث عنه. "
+                    "يبدو أن برنامج HAYAT-100 هو البرنامج الأكثر توافقاً مع ما تبحث عنه. "
                     "تم تصميم هذا البرنامج حول طول العمر والشيخوخة الصحية، مع تجارب مقترحة تركز على التغذية السليمة، "
                     "والنشاط الحركي، والتوعية بأسلوب الحياة الصحي، والراحة والاستشفاء.\n\n"
                     "ما الذي يثير اهتمامك أكثر في رحلة الشيخوخة الصحية — التوعية بطول العمر، أم تحسين العادات الغذائية، "
@@ -188,7 +362,7 @@ class ProgrammeConversationService:
             return self._build_result(enquiry, reply, suggestions, language)
 
         # If user selected or mentioned women's wellness / AAfiya:
-        if re.search(r"\b(women'?s (?:wellness|fitness|retreat)|aafiya|aafiyah|pilates|yoga for women)\b|عافية|لياقة السيدات|عافية السيدات", lower_text):
+        if enquiry.primary_programme != "aafiya" and re.search(r"\b(women'?s (?:wellness|fitness|retreat)|aafiya|aafiyah|pilates|yoga for women)\b|عافية|لياقة السيدات|عافية السيدات", lower_text):
             enquiry.primary_programme = "aafiya"
             if "aafiya" not in enquiry.interested_programmes:
                 enquiry.interested_programmes.append("aafiya")
@@ -197,7 +371,7 @@ class ProgrammeConversationService:
 
             if language == "ar":
                 reply = (
-                    "يبدو أن عافية هي التجربة الأنسب لما تبحثين عنه. عافية هي تجربة للياقة والعافية مخصصة للسيدات، "
+                    "يبدو أن AAfiya هي التجربة الأنسب لما تبحثين عنه. AAfiya هي تجربة للياقة والعافية مخصصة للسيدات، "
                     "تجمع بين الحركة، والتغذية السليمة، والعناية الذاتية، والتواصل الإيجابي في بيئة مرحبة وداعمة لجميع المستويات.\n\n"
                     "ما نوع التجارب التي تفضلين التركيز عليها — تمارين البيلاتس واليوغا، أم ورش العمل الصحية، "
                     "أم التغذية المتوازنة، أم الاسترخاء والاستجمام؟"
@@ -218,7 +392,7 @@ class ProgrammeConversationService:
             return self._build_result(enquiry, reply, suggestions, language)
 
         # If user selected or mentioned executive wellness / FFounders:
-        if re.search(r"\b(executive (?:wellness|fitness|retreat)|ffounders|f[- ]founders|founders|entrepreneurs?|c-suite|leadership)\b|فاوندرز|رواد الأعمال|القادة", lower_text):
+        if enquiry.primary_programme != "ffounders" and re.search(r"\b(executive (?:wellness|fitness|retreat)|ffounders|f[- ]founders|founders|entrepreneurs?|c-suite|leadership)\b|فاوندرز|رواد الأعمال|القادة", lower_text):
             enquiry.primary_programme = "ffounders"
             if "ffounders" not in enquiry.interested_programmes:
                 enquiry.interested_programmes.append("ffounders")
@@ -227,7 +401,7 @@ class ProgrammeConversationService:
 
             if language == "ar":
                 reply = (
-                    "يبدو أن فاوندرز هو الخيار المثالي لك. فاوندرز هو منتجع متميز للياقة والعافية التنفيذية "
+                    "يبدو أن FFounders هو الخيار المثالي لك. FFounders هو منتجع متميز للياقة والعافية التنفيذية "
                     "مصمم لمؤسسي الشركات ورواد الأعمال والقادة لإعادة شحن طاقتهم، وبناء المرونة الجسدية والنفسية، "
                     "والتواصل البنّاء مع أقرانهم من قادة الأعمال.\n\n"
                     "ما الجانب الذي تود إعطاءه الأولوية — اللياقة والقوة البدنية، أم إدارة التوتر والتعافي، "
@@ -283,35 +457,37 @@ class ProgrammeConversationService:
         if enquiry.primary_programme and not enquiry.destination_preference:
             enquiry.current_stage = ProgrammeStage.DESTINATION_PREFERENCE
             self.store.save_programme_enquiry(enquiry)
-            act_ack = f"I've noted your interest in {', '.join(enquiry.activity_interests)}. " if enquiry.activity_interests else ""
+            act_ack = ""
+            if enquiry.activity_interests:
+                act_ack = "سجلت اهتماماتك. " if language == "ar" else f"I've noted your interest in {', '.join(enquiry.activity_interests)}. "
+            aafiya = enquiry.primary_programme == ProgrammeId.AAFIYA.value
             if language == "ar":
+                countries = (
+                    "الإمارات، والهند، واليابان، وسنغافورة" if aafiya
+                    else "إسبانيا، واليابان، والولايات المتحدة، والإمارات، وسنغافورة، والهند"
+                )
                 reply = (
-                    f"{act_ack}نستكشف حالياً وجهات متميزة للمنتجعات في إسبانيا، واليابان، والولايات المتحدة، "
-                    "والإمارات، وسنغافورة، والهند، إلى جانب وجهات دولية أخرى ملائمة.\n\n"
+                    f"{act_ack}نستكشف حالياً وجهات متميزة للمنتجعات في {countries}، إلى جانب وجهات دولية أخرى ملائمة.\n\n"
                     "هل لديك وجهة أو دولة مفضلة، أم ترغب في استكشاف كافة الخيارات المتاحة دون تفضيل محدد؟"
                 )
             else:
+                countries = (
+                    "the UAE, India, Japan, and Singapore" if aafiya
+                    else "Spain, Japan, the United States, the UAE, Singapore, and India"
+                )
                 reply = (
-                    f"{act_ack}We are currently exploring candidate retreat destinations across Spain, Japan, "
-                    "the United States, the UAE, Singapore, and India, alongside other suitable international locations.\n\n"
+                    f"{act_ack}We are currently exploring candidate retreat destinations across {countries}, "
+                    "alongside other suitable international locations.\n\n"
                     "Do you have a preferred country in mind, or are you open to exploring available options?"
                 )
-            suggestions = [
-                ChatAction(action_id="dest_spain", type="message", label="Spain", payload="I prefer Spain.", relevance="destination"),
-                ChatAction(action_id="dest_japan", type="message", label="Japan", payload="I prefer Japan.", relevance="destination"),
-                ChatAction(action_id="dest_us", type="message", label="United States", payload="I prefer the United States.", relevance="destination"),
-                ChatAction(action_id="dest_uae", type="message", label="UAE", payload="I prefer the UAE.", relevance="destination"),
-                ChatAction(action_id="dest_singapore", type="message", label="Singapore", payload="I prefer Singapore.", relevance="destination"),
-                ChatAction(action_id="dest_india", type="message", label="India", payload="I prefer India.", relevance="destination"),
-                ChatAction(action_id="dest_flexible", type="message", label="Undecided / Open", payload="I am open to exploring any suitable destination.", relevance="destination"),
-            ]
+            suggestions = _destination_actions(enquiry)
             return self._build_result(enquiry, reply, suggestions, language)
 
         # If destination is known but travel period is not yet collected:
         if enquiry.destination_preference and not enquiry.preferred_travel_period:
             enquiry.current_stage = ProgrammeStage.TRAVEL_PERIOD
             self.store.save_programme_enquiry(enquiry)
-            dest_ack = f"I have noted your destination preference for {enquiry.destination_preference}. "
+            dest_ack = "سجلت وجهتك المفضلة. " if language == "ar" else f"I have noted your destination preference for {enquiry.destination_preference}. "
             if language == "ar":
                 reply = (
                     f"{dest_ack}مواعيد الرحلات والمنتجعات قيد الإعداد حالياً مع شركائنا.\n\n"
@@ -383,7 +559,7 @@ class ProgrammeConversationService:
         enquiry.current_stage = ProgrammeStage.SUMMARY_REVIEW
         self.store.save_programme_enquiry(enquiry)
 
-        prog_title = enquiry.primary_programme.replace("_", "-").upper() if enquiry.primary_programme else "Signature Wellness Retreat"
+        prog_title = _programme_name(enquiry)
         dest_display = enquiry.destination_preference or "Open / Undecided (candidate market under exploration)"
         time_display = enquiry.preferred_travel_period or enquiry.preferred_month or "Flexible"
         activities_display = ", ".join(enquiry.activity_interests) if enquiry.activity_interests else "Wellness, healthy lifestyle & recovery"
@@ -391,6 +567,14 @@ class ProgrammeConversationService:
         budget_display = enquiry.budget_range or "To be evaluated with tailored proposal"
 
         if language == "ar":
+            dest_display, time_display, budget_display = (
+                ARABIC_LABELS.get(value, value) for value in (dest_display, time_display, budget_display)
+            )
+            if enquiry.activity_interests:
+                activities_display = "، ".join(ARABIC_LABELS.get(item, item) for item in enquiry.activity_interests)
+            else:
+                activities_display = "العافية وأسلوب الحياة الصحي والتعافي"
+            group_display = "بمفردي" if not enquiry.group_participation else f"مجموعة ({enquiry.group_size or 'عدة مشاركين'})"
             reply = (
                 f"إليك ملخص تفضيلاتك لرحلة العافية حتى الآن:\n\n"
                 f"• البرنامج: {prog_title}\n"
@@ -428,49 +612,22 @@ class ProgrammeConversationService:
         enquiry: SignatureProgrammeEnquiry,
         lower_text: str,
         language: str,
+        visitor: str | None = None,
+        contactable: bool = False,
     ) -> dict[str, Any]:
         """Record registration of interest, assign reference code, and enforce Policy Addendum 1.1."""
+        if visitor == "guest":
+            reply = SIGN_IN_REPLY_AR if language == "ar" else SIGN_IN_REPLY_EN
+            return self._build_result(enquiry, reply, [sign_in_action(language)], language)
+
         enquiry.registration_status = RegistrationStatus.INTEREST_REGISTERED
         enquiry.enquiry_status = EnquiryStatus.SUBMITTED
         enquiry.contact_consent_status = ContactConsentStatus.GRANTED
         enquiry.current_stage = ProgrammeStage.REGISTERED_INTEREST
 
-        if not enquiry.reference_code:
-            enquiry.reference_code = f"ENQ-{str(enquiry.enquiry_id)[:8].upper()}"
+        assign_reference_code(enquiry)
         self.store.save_programme_enquiry(enquiry)
-
-        prog_display = enquiry.primary_programme.replace("_", "-").upper() if enquiry.primary_programme else "Signature Wellness Programmes"
-        has_authorized_contact = bool(enquiry.lead_phone or enquiry.lead_email)
-
-        if language == "ar":
-            if has_authorized_contact:
-                contact_msg = "سيقوم منسق العافية المعتمد بمراجعة خيارات المقترح والتواصل معك عبر وسيلة التواصل المسجلة."
-            else:
-                contact_msg = (
-                    "نظراً لعدم جمع أي بيانات اتصال شخصية في هذه المحادثة، فلن يبدأ منسقو العافية تواصلاً مباشراً تلقائياً. "
-                    "يمكنك الاحتفاظ بالرقم المرجعي أعلاه واستخدامه عند التواصل معنا أو استكمال تسجيل وسيلة التواصل عبر بوابتنا الآمنة."
-                )
-            reply = (
-                f"تم تسجيل اهتمامك بنجاح في {prog_display}! (الرقم المرجعي: {enquiry.reference_code})\n\n"
-                "هذا التسجيل مجاني تماماً ولا يترتب عليه أي التزام مالي أو حجز تلقائي. "
-                "سيقوم فريق تنسيق العافية بدراسة تفضيلاتك وتجهيز مقترح مخصص عند اكتمال ترتيبات الوجهة والمواعيد.\n\n"
-                f"{contact_msg}"
-            )
-        else:
-            if has_authorized_contact:
-                contact_msg = "An authorized wellness coordinator will review your proposal options and follow up via your registered contact method."
-            else:
-                contact_msg = (
-                    "Because no personal contact details were requested or collected in this chat, "
-                    "our team will not initiate unsolicited outreach. You may reference this registration code "
-                    "whenever you choose to connect through our secure portal or authorized channels."
-                )
-            reply = (
-                f"Thank you! Your interest in {prog_display} has been successfully registered! (Reference: {enquiry.reference_code})\n\n"
-                "This registration of interest is completely free and non-binding. It is not an autonomous booking or charge. "
-                "Our wellness coordination team will review your curated preferences and evaluate tailored retreat options as partner arrangements and dates are finalised.\n\n"
-                f"{contact_msg}"
-            )
+        reply = registration_reply(enquiry, language, visitor, contactable)
 
         suggestions = [
             ChatAction(action_id="view_summary", type="message", label="Review my summary", payload="Please show me my preference summary.", relevance="summary"),
@@ -557,7 +714,7 @@ class ProgrammeConversationService:
         elif "evaluate proposals first" in lower or "explore proposals" in lower:
             enquiry.budget_range = "To be evaluated with proposal"
 
-    def _check_faq_queries(self, lower_text: str, language: str) -> str | None:
+    def _check_faq_queries(self, lower_text: str, language: str, enquiry: SignatureProgrammeEnquiry) -> str | None:
         """Ground responses to user questions in approved knowledge."""
         if _SKIP_KEYWORDS_RE.search(lower_text):
             return None
@@ -579,6 +736,8 @@ class ProgrammeConversationService:
             return DATES_EXPLANATION_AR if language == "ar" else DATES_EXPLANATION_EN
 
         if any(term in lower_text for term in ["where will", "where are", "locations", "which country", "countries", "أين", "وجهات"]):
+            if enquiry.primary_programme == ProgrammeId.AAFIYA.value:
+                return AAFIYA_DESTINATIONS_EXPLANATION_AR if language == "ar" else AAFIYA_DESTINATIONS_EXPLANATION_EN
             return DESTINATIONS_EXPLANATION_AR if language == "ar" else DESTINATIONS_EXPLANATION_EN
 
         return None
@@ -596,12 +755,7 @@ class ProgrammeConversationService:
                 ChatAction(action_id="sel_ffounders", type="message", label="FFounders (Executive Wellness)", payload="Tell me about FFounders executive retreat.", relevance="programme selection"),
             ]
         if not enquiry.destination_preference:
-            return [
-                ChatAction(action_id="dest_spain", type="message", label="Spain", payload="I prefer Spain.", relevance="destination"),
-                ChatAction(action_id="dest_japan", type="message", label="Japan", payload="I prefer Japan.", relevance="destination"),
-                ChatAction(action_id="dest_usa", type="message", label="United States", payload="I prefer the United States.", relevance="destination"),
-                ChatAction(action_id="dest_open", type="message", label="Undecided / Open", payload="I am open to exploring suitable destinations.", relevance="destination"),
-            ]
+            return _destination_actions(enquiry)
         if not enquiry.preferred_travel_period:
             return [
                 ChatAction(action_id="time_3m", type="message", label="Next 3 months", payload="I prefer the next 3 months.", relevance="timing"),
@@ -624,6 +778,11 @@ class ProgrammeConversationService:
         suggestions: list[ChatAction],
         language: str,
     ) -> dict[str, Any]:
+        if language == "ar":
+            suggestions = [
+                action.model_copy(update={"label": ARABIC_LABELS.get(action.label, action.label)})
+                for action in suggestions
+            ]
         return {
             "reply": reply,
             "answer": reply,

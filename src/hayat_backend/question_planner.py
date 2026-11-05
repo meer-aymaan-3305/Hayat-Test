@@ -45,6 +45,7 @@ class QuestionPlanner:
         conversation: Any,
         decision: Any,
         progress: Any,
+        visitor: str | None = None,
     ) -> PlannedStep:
         if decision.escalation_required:
             return PlannedStep("escalate", "Safety or policy escalation takes priority.")
@@ -78,6 +79,12 @@ class QuestionPlanner:
                     question_text=self._question_for(field, category),
                     target_field=field,
                 )
+            # The website knows who a visitor is, so it never collects contact
+            # details in chat: customers have an account, guests are sent to one.
+            if visitor == "customer":
+                return PlannedStep("account_request_saved", "The signed-in customer's account covers contact.")
+            if visitor == "guest":
+                return PlannedStep("sign_in_required", "A guest needs an account to take this further.")
             if missing_contact:
                 field, label = missing_contact
                 return PlannedStep(

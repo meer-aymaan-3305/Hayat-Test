@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Literal
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from time import perf_counter
@@ -55,7 +56,11 @@ from .schemas.programme import (
     SignatureProgrammeEnquiryUpdate,
     SignatureProgrammeRegistrationRequest,
 )
+from .guardrails import redact_message
+from .schemas.chat import RedactRequest
 from .policy_engine import EF_SCRIPTS_EN, EF_SCRIPTS_AR
+from .programme_service import assign_reference_code, registration_reply
+from .service_auth import OPEN_PATHS, is_service_token
 from .audit_logging import global_audit_store
 
 logger = logging.getLogger("hayat")
@@ -123,6 +128,19 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    system_secret = settings.jwt_system_secret.get_secret_value() if settings.jwt_system_secret else None
+
+    # Everything except health and docs must arrive through trawellcare-bff.
+    @app.middleware("http")
+    async def require_service(request: Request, call_next):
+        if (
+            settings.app_env != "test"
+            and request.url.path not in OPEN_PATHS
+            and not is_service_token(request.headers.get("X-Service-Token"), system_secret)
+        ):
+            return JSONResponse(status_code=401, content={"detail": "Not authenticated."})
+        return await call_next(request)
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):
@@ -197,11 +215,19 @@ def create_app(
             "suggested_actions": actions,
         }
 
+    @app.post("/v1/redact", tags=["chat"])
+    async def redact(payload: RedactRequest) -> dict[str, str]:
+        """Clean text a visitor wrote outside the chat, such as a chat title, before it's saved."""
+        return {"text": redact_message(payload.text)}
+
     @app.post("/v1/chat", tags=["chat"])
     async def chat(
         payload: ChatRequest,
         x_session_id: UUID = Header(..., alias="X-Session-ID"),
         x_session_token: str = Header(..., alias="X-Session-Token"),
+        x_visitor: Literal["guest", "customer"] | None = Header(default=None, alias="X-Visitor"),
+        x_contact_consent: bool = Header(default=False, alias="X-Contact-Consent"),
+        x_reply_language: Literal["en", "ar"] | None = Header(default=None, alias="X-Reply-Language"),
     ):
         try:
             store.authorize(x_session_id, x_session_token)
@@ -210,7 +236,16 @@ def create_app(
             raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
         try:
             result = await chat_service.respond(
-                conversation, payload.message, payload.client_message_id
+                conversation,
+                payload.message,
+                payload.client_message_id,
+                x_visitor,
+                # A promise of contact needs the customer's consent and Addendum 1.1.
+                contactable=x_contact_consent and settings.policy_addendum_1_1_approved,
+                reply_language=x_reply_language,
+                # Website visitors get scripted replies until the AI passes
+                # safety testing. See docs/HAYAT_POLICY_REGISTER.md.
+                use_ai=x_visitor is None or settings.medical_ai_replies,
             )
         except Exception as exc:
             # UH-6 & EF-8: Integration or database failure during turn
@@ -228,6 +263,7 @@ def create_app(
                 "conversation_id": conversation.id,
                 "message_id": uuid4(),
                 "reply": ef8_reply,
+                "stored_message": redact_message(payload.message),
                 "language": language,
                 "escalation_required": True,
                 "escalation_reason": "EF-8",
@@ -252,6 +288,7 @@ def create_app(
             "conversation_id": conversation.id,
             "message_id": result["assistant_message"].id,
             "reply": result["assistant_message"].content,
+            "stored_message": redact_message(payload.message),
             "language": result["language"],
             "escalation_required": result["escalation_required"],
             "escalation_reason": result["escalation_reason"],
@@ -636,30 +673,28 @@ def create_app(
             raise HTTPException(status_code=403, detail="Session access denied.") from exc
 
         enquiry = store.get_programme_enquiry(enquiry_id)
-        if not enquiry:
+        if not enquiry or enquiry.session_id != x_session_id:
             raise HTTPException(status_code=404, detail="Programme enquiry not found.")
 
-        enquiry.lead_name = payload.full_name
-        enquiry.lead_phone = payload.phone_number
-        enquiry.lead_email = payload.email
-        enquiry.preferred_contact_method = payload.preferred_contact_method
-        enquiry.contact_consent_status = (
-            ContactConsentStatus.GRANTED if payload.contact_consent else ContactConsentStatus.REFUSED
-        )
+        # Contact details are only kept once Policy Addendum 1.1 is approved.
+        if settings.policy_addendum_1_1_approved:
+            enquiry.lead_name = payload.full_name
+            enquiry.lead_phone = payload.phone_number
+            enquiry.lead_email = payload.email
+            enquiry.preferred_contact_method = payload.preferred_contact_method
+            enquiry.contact_consent_status = (
+                ContactConsentStatus.GRANTED if payload.contact_consent else ContactConsentStatus.REFUSED
+            )
         enquiry.registration_status = RegistrationStatus.INTEREST_REGISTERED
         enquiry.enquiry_status = EnquiryStatus.SUBMITTED
         enquiry.updated_at = datetime.now(UTC)
+        assign_reference_code(enquiry)
 
         store.save_programme_enquiry(enquiry)
 
-        summary_text = (
-            f"Thank you, {payload.full_name}! Your interest in {enquiry.primary_programme or 'Signature Programmes'} "
-            "has been registered. Registration is free and non-binding. Our coordination team will follow up."
-        )
-
         return SignatureProgrammeEnquiryResponse(
             enquiry=enquiry,
-            summary_text=summary_text,
+            summary_text=registration_reply(enquiry, store.get_session(x_session_id).locale),
             coordinator_assigned=False,
         )
 

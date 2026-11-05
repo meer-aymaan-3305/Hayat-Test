@@ -179,8 +179,8 @@ class SignatureProgrammeRegistrationRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    full_name: str
-    phone_number: str
+    full_name: str | None = None
+    phone_number: str | None = None
     email: str | None = None
     contact_consent: bool = True
     preferred_contact_method: str = "phone"

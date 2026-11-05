@@ -26,6 +26,10 @@ class ChatRequest(ContractModel):
     client_message_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
+class RedactRequest(ContractModel):
+    text: str = Field(min_length=1, max_length=8_000)
+
+
 class ChatAction(ContractModel):
     action_id: str = Field(min_length=1, max_length=80)
     type: str = Field(default="message", min_length=1, max_length=40)

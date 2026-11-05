@@ -215,7 +215,7 @@ DEFAULT_APPROVED_KNOWLEDGE: list[KnowledgeChunk] = [
     KnowledgeChunk(
         text=(
             "Signature Programmes Potential Destinations & Schedule: Trawellcare is exploring candidate destinations across the "
-            "Americas, Europe, the Middle East and Asia, including the United States, Spain, Japan, Singapore, India, and the UAE. "
+            "Americas, Europe and Asia, including the United States, Spain, Japan, Singapore, India, and the UAE. "
             "These are markets under exploration rather than confirmed facilities. Dates and itineraries are actively being curated. "
             "Each retreat is planned as a seven-day experience with five retreat days and two travel days."
         ),
@@ -229,7 +229,7 @@ DEFAULT_APPROVED_KNOWLEDGE: list[KnowledgeChunk] = [
     KnowledgeChunk(
         text=(
             "برامج العافية المتميزة - نظرة عامة: تطور ترافيل كير ثلاثة برامج عافية متميزة: "
-            "حياة-100 (طول العمر والشيخوخة الصحية)، وعافية (لياقة وعافية السيدات)، وفاوندرز (لياقة وعافية القادة ورواد الأعمال). "
+            "HAYAT-100 (طول العمر والشيخوخة الصحية)، وAAfiya (لياقة وعافية السيدات)، وFFounders (لياقة وعافية القادة ورواد الأعمال). "
             "مدة كل برنامج سبعة أيام (خمسة أيام منتجع ويومان للسفر). يتم تصميم البرامج بشكل مخصص وفردي دون سعر ثابت للباقة. "
             "الوجهات قيد الاستكشاف تشمل أمريكا وإسبانيا واليابان وسنغافورة والهند والإمارات. التسجيل مجاني ولا يترتب عليه أي التزام مالي."
         ),

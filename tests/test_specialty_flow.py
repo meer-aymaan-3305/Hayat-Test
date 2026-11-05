@@ -356,3 +356,21 @@ def test_mixed_in_scope_answer_and_unrelated_question():
     facts = {f["field_name"]: f["value"] for f in res["persona_profile"]["facts"]}
     assert facts.get("procedure_or_service") == "Cardiology"
     assert res["follow_up_target"] == "destination_preference"
+
+
+def test_fertility_button_keeps_the_conversation_going():
+    client = TestClient(create_app(store=MemoryStore()))
+    session = client.post("/v1/sessions/guest", json={"locale": "en"}).json()
+    headers = {"X-Session-ID": session["session_id"], "X-Session-Token": session["session_token"]}
+    conversation = client.post(
+        "/v1/conversations",
+        json={"guest_session_id": session["session_id"]},
+        headers={"X-Session-Token": session["session_token"]},
+    ).json()
+    body = client.post(
+        "/v1/chat",
+        json={"conversation_id": conversation["id"], "message": "Fertility: I want to explore options abroad"},
+        headers=headers,
+    ).json()
+    assert body["next_action"] == "collect_detail"
+    assert body["follow_up_target"] == "destination_preference"

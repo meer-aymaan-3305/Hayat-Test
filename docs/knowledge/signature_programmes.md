@@ -33,7 +33,7 @@ The seven-day duration includes five retreat days and two travel days. Actual tr
 
 
 Potential Destinations
-trawellcare is exploring premium retreat destinations across the Americas, Europe, the Middle East and Asia.
+trawellcare is exploring premium retreat destinations across the Americas, Europe and Asia.
 Potential markets include:
 United States.
 Spain.
@@ -446,7 +446,7 @@ Never promise a quotation by a specific date or provide an estimated amount with
 6.4 When a Visitor Asks About Dates
 "The retreat dates are still being curated. Do you have a preferred month or travel period? I can make a note of it for our team."
 6.5 When a Visitor Asks About Destinations
-"We are exploring destinations across the Americas, Europe, the Middle East and Asia. Do you have a particular country or destination in mind?"
+"We are exploring destinations across the Americas, Europe and Asia. Do you have a particular country or destination in mind?"
 6.6 When a Visitor Wants to Register Interest
 "Wonderful. I'd be happy to note your interest. May I have your name first?"
 Then collect the following details conversationally, one question at a time:

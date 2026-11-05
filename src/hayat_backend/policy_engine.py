@@ -213,18 +213,40 @@ _DIAGNOSIS_RE = re.compile(
     r"pretend you(?:'re| are) (?:a |an |licensed )*(?:doctor|physician|cardiologist|clinician)|"
     r"hypothetically,?\s+if (?:i|someone|a person) (?:had|has)|"
     r"as (?:a medical expert|chief medical officer),?\s+)\b|"
-    r"(تشخيص|شخص|شخّص|ما هو مرضي|وصفة طبية|جرعة الدواء|فسر تحليلي|فسر الأشعة|هل هذا خطير|هل هذا سرطان)",
+    r"(تشخيص|شخّص|شخص (?:حالتي|مرضي)|شخصني|ما هو مرضي|وصفة طبية|جرعة الدواء|فسر تحليلي|فسر الأشعة|هل هذا خطير|هل هذا سرطان)",
     re.IGNORECASE,
 )
 
 # HB-3 & EF-3: Provider or treatment recommendation requests
 _PROVIDER_RECOMMEND_RE = re.compile(
-    r"\b(which hospital is (?:better|best)|recommend (?:a |the (?:best|top) )?(?:[a-z]+ )?(?:hospital|doctor|surgeon|cardiologist|specialist|clinic)|"
+    r"\b(which (?:hospital|clinic|doctor|surgeon|specialist)s?\b[^.?!]{0,40}\b(?:better|best|top|good)|"
+    r"(?:which|what) (?:country|countries|destination|city)\b[^.?!]{0,40}\b(?:better|best|top)|"
+    r"(?:best|top|better|good) (?:[a-z]+ ){0,2}(?:hospitals?|clinics?|doctors?|surgeons?|cardiologists?|specialists?)|"
+    r"recommend (?:a |the (?:best|top) )?(?:[a-z]+ )?(?:hospital|doctor|surgeon|cardiologist|specialist|clinic)|"
     r"who is the (?:best|top) (?:doctor|cardiologist|surgeon|specialist)|"
     r"rank (?:the )?(?:hospitals|clinics|doctors)|(?:hospital|clinic) (?:x|y|a|b) is better|"
     r"what treatment is better for me|choose a (?:hospital|doctor) for me)\b|"
-    r"(أي مستشفى أفضل|رشح لي أفضل طبيب|أفضل دكتور|مقارنة بين مستشفى ومستشفى|اختر لي دكتور)",
+    r"(أي مستشفى أفضل|رشح لي أفضل طبيب|أفضل دكتور|مقارنة بين مستشفى ومستشفى|اختر لي دكتور|"
+    r"أفضل (?:مستشفى|المستشفيات|طبيب|الأطباء|عيادة|العيادات|جراح))",
     re.IGNORECASE,
+)
+
+# HB-3: Hayat's own words. The patterns above describe questions, so a reply
+# naming or ranking providers needs its own check.
+_PROVIDER_CLAIM_RE = re.compile(
+    r"\b(apollo|fortis|medanta|manipal|narayana|aiims|aster|burjeel|mediclinic|bumrungrad|acibadem|"
+    r"cleveland clinic|mayo clinic|max (?:healthcare|hospital|super)|"
+    r"(?:best|top|leading|finest|renowned|excellent|world-class) (?:[a-z-]+ ){0,3}"
+    r"(?:hospitals?|clinics?|doctors?|surgeons?|cardiologists?|specialists?)|"
+    r"i (?:would |'d )?(?:recommend|suggest|advise)|hospital recommendations?|strong reputation|"
+    r"(?:is|are) (?:a |an |the )?(?:suitable|good|great|ideal|best|excellent|top) "
+    r"(?:[a-z-]+ ){0,2}(?:option|choice|destination)s?)\b|"
+    r"(أبولو|فورتيس|ميدانتا|أفضل (?:مستشفى|المستشفيات|طبيب|الأطباء|عيادة|العيادات|جراح)|أنصحك|أوصي)",
+    re.IGNORECASE,
+)
+# A provider's proper name, such as "Sunrise Heart Hospital". Case matters here.
+_PROVIDER_NAME_RE = re.compile(
+    r"\b[A-Z][\w'&-]+(?: [A-Z][\w'&-]+){0,3} (?:Hospitals?|Clinics?|Medical (?:Center|Centre)|Healthcare)\b"
 )
 
 # HB-2, DP-5 & EF-2: Unsolicited clinical details volunteered (symptoms, labs, medications, vitals)
@@ -236,8 +258,13 @@ _UNSOLICITED_PHI_RE = re.compile(
     r"(?:past\s+)?(?:medical\s+|treatment\s+)?history(?:\s+of)?|had a (?:triple\s+|coronary\s+)?[a-z ]*(?:surgery|bypass|operation)|"
     r"(?:clinical\s+|doctor's\s+)?notes?\s+(?:state|states|show|shows|say|says)|"
     r"(?:suffering from\s+)?(?:major\s+)?(?:depressive|depression|panic attacks|bipolar|schizophrenia|ptsd)|"
-    r"(?:chest\s+)?palpitations)\b|"
-    r"(أعاني من ألم شديد في|أعراضي هي|تم تشخيصي بـ|ضغط دمي|نتيجة التحليل كانت|أتناول دواء|جرعة)",
+    r"(?:chest\s+)?palpitations|"
+    r"(?:i have|i've got|i suffer from|i am suffering from|i'm suffering from|my [a-z]+ has)\s+"
+    r"(?:[a-z0-9-]+\s+){0,3}(?:diabetes|hypertension|cancer|tumou?r|asthma|hiv|hepatitis|epilepsy|arthritis|"
+    r"stroke|thyroid|kidney (?:disease|failure)|heart (?:disease|failure)|high blood pressure)|"
+    r"(?:i am|i'm|currently)\s+(?:on|taking)\s+(?:insulin|metformin|warfarin|statins?|aspirin|chemotherapy|[a-z]+\s+medication))\b|"
+    r"(أعاني من ألم شديد في|أعراضي هي|تم تشخيصي بـ|ضغط دمي|نتيجة التحليل كانت|أتناول دواء|جرعة|"
+    r"(?:لدي|عندي|أعاني من) (?:مرض )?(?:السكري|السكر|سرطان|ضغط الدم|الربو))",
     re.IGNORECASE,
 )
 
@@ -245,7 +272,7 @@ _UNSOLICITED_PHI_RE = re.compile(
 _UNRELATED_RE = re.compile(
     r"\b(recipe|bake|cake|cookies|chocolate cake|football|world cup|premier league|champions league|"
     r"crypto|bitcoin|ethereum|solana|python(?: code| script)?|write (?:python )?code|debug code|programming in|"
-    r"weather in|stock (?:price|market)|apple stock|car repair|astrology|horoscope|capital of france)\b|"
+    r"weather|stock (?:price|market)|apple stock|car repair|astrology|horoscope|capital of france)\b|"
     r"(كعكة|كيك|وصفة طعام|كرة قدم|كريبتو|بيتكوين|برمجة|الطقس في|سوق الأسهم)",
     re.IGNORECASE,
 )
@@ -632,7 +659,11 @@ class PolicyEnforcementEngine:
             return scripts["EF-1"]
 
         # Ensure model never recommended or ranked specific providers
-        if _PROVIDER_RECOMMEND_RE.search(cleaned):
+        if (
+            _PROVIDER_RECOMMEND_RE.search(cleaned)
+            or _PROVIDER_CLAIM_RE.search(cleaned)
+            or _PROVIDER_NAME_RE.search(cleaned)
+        ):
             scripts = EF_SCRIPTS_AR if language == "ar" else EF_SCRIPTS_EN
             return scripts["EF-3"]
 

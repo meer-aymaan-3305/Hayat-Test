@@ -11,8 +11,13 @@ import os
 import re
 import uuid
 from typing import Any
+from datetime import UTC, datetime, timedelta
+
+import jwt
 import requests
 import streamlit as st
+
+from hayat_backend.config import get_settings
 
 
 def _validation_detail(response: requests.Response) -> str:
@@ -26,6 +31,19 @@ def _validation_detail(response: requests.Response) -> str:
         return str(detail)
     except ValueError:
         return "The API returned a safe error."
+
+
+def _demo_client() -> requests.Session:
+    """The API only accepts service callers, so the local demo signs in as one."""
+    session = requests.Session()
+    secret = get_settings().jwt_system_secret
+    if secret:
+        claims = {"sub": "system:streamlit-demo", "exp": datetime.now(UTC) + timedelta(hours=12)}
+        session.headers["X-Service-Token"] = jwt.encode(claims, secret.get_secret_value(), algorithm="HS256")
+    return session
+
+
+api = _demo_client()
 
 
 def _headers() -> dict[str, str]:
@@ -98,7 +116,7 @@ with st.sidebar.expander("Restore Guest Session"):
     restore_conversation_id = st.text_input("Conversation ID", key="restore_conversation_id")
     if st.button("Restore conversation"):
         headers = {"X-Session-ID": restore_session_id, "X-Session-Token": restore_token}
-        response = requests.get(
+        response = api.get(
             f"{base_url}/v1/conversations/{restore_conversation_id}/messages",
             headers=headers,
             timeout=10,
@@ -112,7 +130,7 @@ with st.sidebar.expander("Restore Guest Session"):
             st.session_state.profile_summary = response.json().get("persona_profile", {})
             st.session_state.consultation_progress = response.json().get("consultation_progress")
             # Fetch handoff if available
-            h_resp = requests.get(
+            h_resp = api.get(
                 f"{base_url}/v1/conversations/{restore_conversation_id}/handoff",
                 headers=headers,
                 timeout=10,
@@ -120,7 +138,7 @@ with st.sidebar.expander("Restore Guest Session"):
             if h_resp.ok:
                 st.session_state.coordinator_handoff = h_resp.json()
             # Fetch programme enquiry if available
-            p_resp = requests.get(
+            p_resp = api.get(
                 f"{base_url}/v1/conversations/{restore_conversation_id}/programme-enquiry",
                 headers=headers,
                 timeout=10,
@@ -146,7 +164,7 @@ if st.sidebar.button("Start New Concierge Session", use_container_width=True):
     st.session_state.messages = []
     st.session_state.suggestions = []
 
-    response = requests.post(
+    response = api.post(
         f"{base_url}/v1/sessions/guest",
         json={"locale": st.session_state.locale},
         timeout=10,
@@ -155,7 +173,7 @@ if st.sidebar.button("Start New Concierge Session", use_container_width=True):
         data = response.json()
         st.session_state.session_id = data["session_id"]
         st.session_state.token = data["session_token"]
-        conversation = requests.post(
+        conversation = api.post(
             f"{base_url}/v1/conversations",
             headers={"X-Session-Token": st.session_state.token},
             json={"guest_session_id": st.session_state.session_id},
@@ -406,9 +424,9 @@ if prompt and st.session_state.conversation_id:
         "message": prompt,
         "client_message_id": str(uuid.uuid4()),
     }
-    response = requests.post(f"{base_url}/v1/chat", headers=headers, json=payload, timeout=30)
+    response = api.post(f"{base_url}/v1/chat", headers=headers, json=payload, timeout=30)
     if response.status_code == 422 and "client_message_id" in _validation_detail(response):
-        response = requests.post(
+        response = api.post(
             f"{base_url}/v1/chat",
             headers=headers,
             json={k: v for k, v in payload.items() if k != "client_message_id"},
