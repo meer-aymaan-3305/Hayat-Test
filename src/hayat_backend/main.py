@@ -708,4 +708,4 @@ def run() -> None:
     """Run the API with Uvicorn."""
     import uvicorn
 
-    uvicorn.run("hayat_backend.main:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run("hayat_backend.main:app", host="127.0.0.1", port=2005, reload=False)

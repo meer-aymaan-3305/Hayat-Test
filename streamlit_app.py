@@ -75,7 +75,7 @@ st.set_page_config(
 
 st.title("Hayat — Medical & Wellness Concierge")
 
-base_url = st.sidebar.text_input("API URL", os.getenv("HAYAT_API_URL", "http://127.0.0.1:8000"))
+base_url = st.sidebar.text_input("API URL", os.getenv("HAYAT_API_URL", "http://127.0.0.1:2005"))
 
 # State initialization
 if "session_id" not in st.session_state:
