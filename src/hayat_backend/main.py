@@ -71,7 +71,7 @@ from .audit_logging import global_audit_store
 from .knowledge import (
     DocumentIngestionError, DocumentNotFoundError, KnowledgeStore, KnowledgeStoreError,
 )
-from .speech import SpeechError, SpeechInputTooLongError, create_stt, create_tts
+from .speech import EmptyTranscriptError, SpeechError, SpeechInputTooLongError, create_stt, create_tts
 from .attachments import (
     ACKNOWLEDGEMENTS, CONTENT_TYPES, AttachmentError, AttachmentStore, AttachmentStoreError,
     validate_upload,
@@ -193,7 +193,7 @@ def create_app(
     app.add_middleware(
         UploadSizeLimitMiddleware,
         max_body_bytes=settings.max_upload_mb * 1024 * 1024 + MULTIPART_OVERHEAD_BYTES,
-        prefixes=("/v1/knowledge/", "/v1/voice/chat"),
+        prefixes=("/v1/knowledge/", "/v1/voice/chat", "/v1/voice/transcribe"),
         suffixes=("/attachments",),
     )
     app.add_middleware(
@@ -946,6 +946,40 @@ def create_app(
     # Voice: speech-to-text chat and validated-reply text-to-speech
     # =========================================================================
 
+    async def transcribe_upload(file: "UploadFile", *, empty_ok: bool = False) -> tuple[str, str | None]:
+        """Validate a visitor audio upload and run it through Whisper.
+
+        Shared by /v1/voice/chat and /v1/voice/transcribe so both apply the same
+        size, type and transcript-length limits. Provider failures answer 503;
+        with empty_ok a silent recording returns ("", None) instead of 503.
+        """
+        audio = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
+        if not audio:
+            raise HTTPException(status_code=400, detail="Empty audio file.")
+        if len(audio) > settings.max_upload_mb * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Audio file too large.")
+        content_type = file.content_type or "application/octet-stream"
+        if not (content_type.startswith("audio/") or content_type in {
+            "application/octet-stream", "video/webm", "video/mp4",
+        }):
+            raise HTTPException(status_code=415, detail="Unsupported audio format.")
+        try:
+            transcript, detected = await stt.transcribe(
+                audio, _audio_upload_name(file.filename, content_type), content_type
+            )
+        except EmptyTranscriptError:
+            if empty_ok:
+                return "", None
+            raise HTTPException(status_code=503, detail="Speech recognition returned empty transcript.")
+        except SpeechError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if len(transcript) > MAX_MESSAGE_CHARS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"The recording is too long (limit {MAX_MESSAGE_CHARS} characters of speech). Please send a shorter message.",
+            )
+        return transcript, detected
+
     @app.post("/v1/voice/chat", tags=["voice"])
     async def voice_chat(
         file: "UploadFile" = File(...),
@@ -965,27 +999,7 @@ def create_app(
             conversation = store.get_conversation(x_session_id, conversation_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
-        audio = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
-        if not audio:
-            raise HTTPException(status_code=400, detail="Empty audio file.")
-        if len(audio) > settings.max_upload_mb * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="Audio file too large.")
-        content_type = file.content_type or "application/octet-stream"
-        if not (content_type.startswith("audio/") or content_type in {
-            "application/octet-stream", "video/webm", "video/mp4",
-        }):
-            raise HTTPException(status_code=415, detail="Unsupported audio format.")
-        try:
-            transcript, detected = await stt.transcribe(
-                audio, _audio_upload_name(file.filename, content_type), content_type
-            )
-        except SpeechError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        if len(transcript) > MAX_MESSAGE_CHARS:
-            raise HTTPException(
-                status_code=422,
-                detail=f"The recording is too long (limit {MAX_MESSAGE_CHARS} characters of speech). Please send a shorter message.",
-            )
+        transcript, detected = await transcribe_upload(file)
         try:
             result = await chat_service.respond(
                 conversation,
@@ -1034,6 +1048,27 @@ def create_app(
             "message_id": str(result["assistant_message"].id),
         }
         return payload
+
+    @app.post("/v1/voice/transcribe", tags=["voice"])
+    async def voice_transcribe(
+        file: "UploadFile" = File(...),
+        conversation_id: UUID = Form(...),
+        x_session_id: UUID = Header(..., alias="X-Session-ID"),
+        x_session_token: str = Header(..., alias="X-Session-Token"),
+    ):
+        """Dictation: turn visitor audio into text for the message box.
+
+        Same auth and limits as /v1/voice/chat, but nothing is stored and the
+        chat pipeline is never called. The visitor edits and sends the text as
+        an ordinary message. A silent recording returns an empty transcript.
+        """
+        try:
+            store.authorize(x_session_id, x_session_token)
+            store.get_conversation(x_session_id, conversation_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
+        transcript, _ = await transcribe_upload(file, empty_ok=True)
+        return {"transcript": transcript}
 
     @app.post("/v1/voice/synthesize", tags=["voice"])
     async def voice_synthesize(

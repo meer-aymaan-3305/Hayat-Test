@@ -24,6 +24,9 @@ Errors: 400/403 (ownership)/422 (validation).
 ## Voice
 `POST /v1/voice/chat` — multipart `file` (wav/mp3/m4a/ogg/webm, ≤10MB)
 + `conversation_id`. Returns transcript + same chat fields.
+`POST /v1/voice/transcribe` — same `file` + `conversation_id`, auth and limits
+as `/v1/voice/chat`, but dictation only: returns `{transcript}` (empty string
+for a silent recording), stores no message and never runs the chat pipeline.
 `POST /v1/voice/synthesize` — `{conversation_id, message_id}`; only
 stored assistant messages of that conversation; returns `audio/wav`.
 Errors: 400 empty, 403 ownership, 404 message, 413 oversized, 415 type,

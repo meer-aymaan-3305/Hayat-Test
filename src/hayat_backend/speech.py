@@ -30,6 +30,10 @@ class SpeechError(RuntimeError):
     """Raised when a speech provider call fails or is unconfigured."""
 
 
+class EmptyTranscriptError(SpeechError):
+    """The recording was understood as silence: there is no text in it."""
+
+
 class SpeechInputTooLongError(SpeechError):
     """The text is too long to be spoken, even when split into chunks."""
 
@@ -89,7 +93,7 @@ class GroqWhisperSTT:
             raise SpeechError("Speech recognition returned an invalid response.")
         text = text.strip()
         if not text:
-            raise SpeechError("Speech recognition returned empty transcript.")
+            raise EmptyTranscriptError("Speech recognition returned empty transcript.")
         return text, body.get("language")
 
 
