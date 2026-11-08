@@ -36,6 +36,10 @@ class CRMWebhookClient:
         payload: dict[str, Any],
         confirmation_timestamp: Any,
     ) -> bool:
+        # Service-boundary authorization: transmission requires an explicit CP-5
+        # confirmation timestamp. A simple affirmative in chat is not enough.
+        if confirmation_timestamp is None:
+            raise CRMTransmissionError("CRM transmission requires explicit CP-5 consent confirmation.")
         # Enforce Appendix A allowlist strictly before transmission
         sanitized = {k: v for k, v in payload.items() if k in PERMITTED_FIELD_NAMES and v not in (None, "")}
         # Validate through strict Pydantic model (extra='forbid')

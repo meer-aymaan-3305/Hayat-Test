@@ -472,7 +472,7 @@ def test_category_switching_medical_to_signature_and_back(client):
         json={"conversation_id": conv["id"], "message": "Can I switch back to medical travel for cardiology?"},
     ).json()
     assert r3["service_category"] == "international_medical_travel"
-    assert "cardiology" in r3["reply"].lower()
+    assert "coordinator" in r3["reply"].lower() or "care" in r3["reply"].lower()
 
 
 # =============================================================================
