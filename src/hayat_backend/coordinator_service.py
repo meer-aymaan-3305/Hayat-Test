@@ -159,6 +159,8 @@ class CoordinatorHandoffService:
         coordinator_name: str,
         role: CoordinatorRole = CoordinatorRole.CASE_MANAGER,
         notes: str | None = None,
+        actor_id: str | None = None,
+        actor_role: str | None = None,
     ) -> CoordinatorHandoff:
         """Assign an authorized human coordinator to the case."""
         handoff = self.store.get_coordinator_handoff(handoff_id)
@@ -179,8 +181,8 @@ class CoordinatorHandoffService:
             conversation_id=saved.conversation_id,
             status=saved.status.value,
             action="assign_coordinator",
-            actor_id=coordinator_id,
-            actor_role=role.value,
+            actor_id=actor_id or coordinator_id,
+            actor_role=actor_role or role.value,
             notes=notes,
         )
         return saved
@@ -236,6 +238,7 @@ class CoordinatorHandoffService:
         provider_or_clinic: str,
         mode: str = "video_consultation",
         notes: str | None = None,
+        actor_role: str | None = None,
     ) -> CoordinatorHandoff:
         """Confirm an appointment. Strictly requires human coordinator credentials (HB-8)."""
         if not coordinator_id or not coordinator_name:
@@ -269,7 +272,7 @@ class CoordinatorHandoffService:
             status=saved.status.value,
             action="confirm_appointment",
             actor_id=coordinator_id,
-            actor_role="authorized_human_coordinator",
+            actor_role=actor_role or "authorized_human_coordinator",
             notes=f"Confirmed for {appointment_time} at {provider_or_clinic}",
         )
         return saved

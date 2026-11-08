@@ -40,6 +40,7 @@ from .schemas.coordinator import (
     CoordinatorAssignRequest,
     CoordinatorHandoff,
     CoordinatorProgressRequest,
+    CoordinatorRole,
     HandoffStatusResponse,
 )
 from .coordinator_service import CoordinatorHandoffError, CoordinatorHandoffService
@@ -60,7 +61,7 @@ from .guardrails import redact_message
 from .schemas.chat import RedactRequest
 from .policy_engine import EF_SCRIPTS_EN, EF_SCRIPTS_AR
 from .programme_service import assign_reference_code, registration_reply
-from .service_auth import OPEN_PATHS, is_service_token
+from .service_auth import DOCS_PATHS, OPEN_PATHS, is_service_token
 from .audit_logging import global_audit_store
 
 logger = logging.getLogger("hayat")
@@ -131,15 +132,21 @@ def create_app(
 
     system_secret = settings.jwt_system_secret.get_secret_value() if settings.jwt_system_secret else None
 
-    # Everything except health and docs must arrive through trawellcare-bff.
+    # Everything except health must arrive through trawellcare-bff. API docs are
+    # additionally exposed without a token in local development only; in staging
+    # and production they require the same service token as every other route.
     @app.middleware("http")
     async def require_service(request: Request, call_next):
-        if (
-            settings.app_env != "test"
-            and request.url.path not in OPEN_PATHS
-            and not is_service_token(request.headers.get("X-Service-Token"), system_secret)
-        ):
-            return JSONResponse(status_code=401, content={"detail": "Not authenticated."})
+        if settings.app_env == "test":
+            return await call_next(request)
+        path = request.url.path
+        if path in OPEN_PATHS:
+            return await call_next(request)
+        authenticated = is_service_token(request.headers.get("X-Service-Token"), system_secret)
+        if not authenticated:
+            is_docs = path in DOCS_PATHS or path.startswith("/docs/")
+            if not (is_docs and settings.app_env == "development"):
+                return JSONResponse(status_code=401, content={"detail": "Not authenticated."})
         return await call_next(request)
 
     @app.middleware("http")
@@ -184,6 +191,24 @@ def create_app(
             return store.authorize(session_id, x_session_token)
         except PermissionError as exc:
             raise HTTPException(status_code=401, detail="Invalid or expired session.") from exc
+
+    def coordinator_identity(
+        x_coordinator_id: str | None = Header(default=None, alias="X-Coordinator-ID"),
+        x_coordinator_role: str | None = Header(default=None, alias="X-Coordinator-Role"),
+    ) -> tuple[str, CoordinatorRole]:
+        """Coordinator endpoints require an asserted identity, never a default.
+
+        The BFF authenticates the human coordinator and forwards the verified
+        id/role; this service rejects anonymous or malformed identities and
+        unknown roles instead of silently acting as a default coordinator.
+        """
+        if not x_coordinator_id or not x_coordinator_role:
+            raise HTTPException(status_code=401, detail="Coordinator identity is required.")
+        try:
+            role = CoordinatorRole(x_coordinator_role)
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail="Unknown coordinator role.") from exc
+        return x_coordinator_id, role
 
     @app.post("/v1/sessions/guest", tags=["sessions"])
     async def create_guest_session(payload: GuestSessionCreate | None = None) -> dict[str, object]:
@@ -244,8 +269,15 @@ def create_app(
                 contactable=x_contact_consent and settings.policy_addendum_1_1_approved,
                 reply_language=x_reply_language,
                 # Website visitors get scripted replies until the AI passes
-                # safety testing. See docs/HAYAT_POLICY_REGISTER.md.
-                use_ai=x_visitor is None or settings.medical_ai_replies,
+                # safety testing (MEDICAL_AI_REPLIES). Callers that do not
+                # identify a visitor type — the local Streamlit tester — may
+                # use the AI only outside staging/production. In staging and
+                # production a missing X-Visitor header fails closed to the
+                # scripted replies, never to the unapproved AI.
+                use_ai=(
+                    settings.medical_ai_replies
+                    or (x_visitor is None and settings.app_env in {"development", "test"})
+                ),
                 # While the AI is off, shadow mode logs what it would have said.
                 shadow_ai=settings.medical_ai_shadow,
             )
@@ -521,7 +553,7 @@ def create_app(
     @app.get("/v1/coordinator/handoffs/{handoff_id}", response_model=CoordinatorHandoff, tags=["coordinator"])
     async def get_coordinator_handoff(
         handoff_id: UUID,
-        x_coordinator_role: str = Header(default="case_manager", alias="X-Coordinator-Role"),
+        identity: tuple[str, CoordinatorRole] = Depends(coordinator_identity),
     ):
         handoff = store.get_coordinator_handoff(handoff_id)
         if not handoff:
@@ -532,6 +564,7 @@ def create_app(
     async def assign_coordinator(
         handoff_id: UUID,
         payload: CoordinatorAssignRequest,
+        identity: tuple[str, CoordinatorRole] = Depends(coordinator_identity),
     ):
         try:
             return coordinator_service.assign_coordinator(
@@ -540,6 +573,8 @@ def create_app(
                 coordinator_name=payload.coordinator_name,
                 role=payload.role,
                 notes=payload.notes,
+                actor_id=identity[0],
+                actor_role=identity[1].value,
             )
         except CoordinatorHandoffError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -548,15 +583,14 @@ def create_app(
     async def update_coordinator_progress(
         handoff_id: UUID,
         payload: CoordinatorProgressRequest,
-        x_coordinator_id: str = Header(default="coord_101", alias="X-Coordinator-ID"),
-        x_coordinator_role: str = Header(default="case_manager", alias="X-Coordinator-Role"),
+        identity: tuple[str, CoordinatorRole] = Depends(coordinator_identity),
     ):
         try:
             return coordinator_service.update_progress(
                 handoff_id=handoff_id,
                 status=payload.status,
-                coordinator_id=x_coordinator_id,
-                coordinator_role=x_coordinator_role,
+                coordinator_id=identity[0],
+                coordinator_role=identity[1].value,
                 notes=payload.notes,
                 contact_channel_used=payload.contact_channel_used,
             )
@@ -567,7 +601,12 @@ def create_app(
     async def confirm_appointment(
         handoff_id: UUID,
         payload: AppointmentConfirmationRequest,
+        identity: tuple[str, CoordinatorRole] = Depends(coordinator_identity),
     ):
+        # HB-8: the authenticated coordinator identity must match the credential
+        # recorded on the appointment; a caller cannot confirm as someone else.
+        if payload.coordinator_id != identity[0]:
+            raise HTTPException(status_code=403, detail="Coordinator identity mismatch.")
         try:
             return coordinator_service.confirm_appointment(
                 handoff_id=handoff_id,
@@ -577,6 +616,7 @@ def create_app(
                 provider_or_clinic=payload.provider_or_clinic,
                 mode=payload.mode,
                 notes=payload.notes,
+                actor_role=identity[1].value,
             )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -590,8 +630,7 @@ def create_app(
     )
     async def get_coordinator_programme_enquiry(
         identifier: str,
-        x_coordinator_id: str = Header(default="coord_101", alias="X-Coordinator-ID"),
-        x_coordinator_role: str = Header(default="case_manager", alias="X-Coordinator-Role"),
+        identity: tuple[str, CoordinatorRole] = Depends(coordinator_identity),
     ):
         """Allow authorized coordinators to retrieve a programme enquiry by ID or reference code."""
         enquiry = None

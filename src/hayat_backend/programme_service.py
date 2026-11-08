@@ -622,7 +622,8 @@ class ProgrammeConversationService:
 
         enquiry.registration_status = RegistrationStatus.INTEREST_REGISTERED
         enquiry.enquiry_status = EnquiryStatus.SUBMITTED
-        enquiry.contact_consent_status = ContactConsentStatus.GRANTED
+        # No contact details are collected in chat, so contact consent stays
+        # PENDING — it can only become GRANTED through the approved secure flow.
         enquiry.current_stage = ProgrammeStage.REGISTERED_INTEREST
 
         assign_reference_code(enquiry)
