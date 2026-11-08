@@ -1,12 +1,12 @@
 # HAYAT — Master Requirements Matrix
 
-Date: 2026-11-08 · `launch-v1` · Tests: 287/287
+Date: 2026-11-08 · `launch-v1` · Tests: 295/295
 Legend: ✅ done+tested · 🟡 partial · ❌ missing · 🔒 needs approval/access
 
 | # | Requirement | Implementation | Status | Approval? |
 |---|---|---|---|---|
 | 1 | Conversation engine + one-question follow-ups | ChatService + QuestionPlanner + enforce_single_question | ✅ | — |
-| 2 | EN/AR support | detect_language, AR scripts, AR extraction, AR questions | ✅ (MSA; dialects ❌) | — |
+| 2 | EN/AR support | detect_language, AR scripts, AR extraction incl. digits/budget/insurance/value-priority/dialect intents | ✅ (MSA+dialects partial; code-switching partial) | — |
 | 3 | Medical tourism intake | Appendix A facts, funnel states, summary | ✅ | — |
 | 4 | Wellness intake | wellness category + goal extraction | ✅ | — |
 | 5 | Signature programmes | ProgrammeConversationService, 3 programmes, registration, summary, FAQ | ✅ | — |

@@ -60,7 +60,8 @@ _AMBIGUOUS_HINT_RE = re.compile(
 _INTENT_DECLARATION_RE = re.compile(
     r"\b(interested|interest|looking for|want|need|exploring|seeking|would like|"
     r"i'?m interested|i am interested)\b|"
-    r"أهتم|مهتم|أبحث|أريد|أستكشف|أسعى|أرغب|أحتاج",
+    r"أهتم|مهتم|أبحث|أريد|أستكشف|أسعى|أرغب|أحتاج|"
+    r"عايز|أبغى|ابغى|بدّي|محتاج|محتاجة|ودي|وديّة",
     re.IGNORECASE,
 )
 

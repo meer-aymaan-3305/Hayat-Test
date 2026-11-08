@@ -44,6 +44,15 @@ shadow_logger = logging.getLogger("hayat.shadow")
 SHADOW_CALLS_PER_MINUTE = 20
 
 
+_AR_INDIC = "٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹"
+_AR_DIGITS = "01234567890123456789"
+
+
+def _normalize_digits(text: str) -> str:
+    """Map Arabic-Indic and Extended Arabic-Indic digits to ASCII."""
+    return text.translate(str.maketrans(_AR_INDIC, _AR_DIGITS))
+
+
 def _opening(language: str) -> str:
     return "مرحباً! " if language == "ar" else "Hello! "
 
@@ -997,6 +1006,9 @@ class ChatService:
         conversation: Conversation | None = None,
         pending_field: str | None = None,
     ) -> list[FactValue]:
+        # Normalise Arabic-Indic (٠-٩) and Extended Arabic-Indic (۰-۹) digits
+        # so all downstream patterns work on a single digit alphabet.
+        text = _normalize_digits(text)
         updates: list[FactValue] = []
 
         # Email
@@ -1248,10 +1260,15 @@ class ChatService:
             ))
 
         # Budget range
-        budget_match = re.search(r"\b(?:budget|between)\s+([A-Z$€£0-9][A-Za-z$€£0-9,\s.-]{1,40})", text, re.I)
+        budget_match = re.search(
+            r"\b(?:budget|between)\s+([A-Z$€£0-9][A-Za-z$€£0-9,\s.-]{1,40})|"
+            r"(?:ميزانية|ميزانيتي|الميزانية)\s*(?:حوالي|تقريبا|بين|مبلغ)?\s*"
+            r"([0-9][0-9,.\s]{0,15}(?:ألف|الف|دولار|درهم|ريال|يورو|$|€|£)?)",
+            text, re.I)
         if budget_match:
             updates.append(FactValue(
-                field_name="budget_range", value=budget_match.group(1).strip(),
+                field_name="budget_range",
+                value=(budget_match.group(1) or budget_match.group(2) or "").strip(),
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
 
@@ -1309,34 +1326,40 @@ class ChatService:
             ))
 
         # Insurance coverage status
-        if re.search(r"\b(no insurance|not covered|without insurance|self[- ]pay|uninsured)\b", text, re.I):
+        if re.search(r"\b(no insurance|not covered|without insurance|self[- ]pay|uninsured)\b|"
+                     r"(?:لا|ليس|مو|ما)\s+(?:يوجد|لدي|معي|عندي)\s+تأمين|بدون\s+تأمين|غير\s+مشمول|بدون\s+تغطية|ما\s+عندي\s+تأمين", text, re.I):
             updates.append(FactValue(
                 field_name="insurance_coverage_status", value="not_covered",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
-        elif re.search(r"\b(have insurance|covered by insurance|insurance covered|insured)\b", text, re.I):
+        elif re.search(r"\b(have insurance|covered by insurance|insurance covered|insured)\b|"
+                       r"لدي\s+تأمين|معي\s+تأمين|مشمول\s+بالتأمين|مغطى\s+بالتأمين", text, re.I):
             updates.append(FactValue(
                 field_name="insurance_coverage_status", value="covered",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
 
         # Value priority
-        if re.search(r"\b(cost[- ]effective(?:ness)?|affordable|budget[- ]friendly|save money|lowest cost)\b", text, re.I):
+        if re.search(r"\b(cost[- ]effective(?:ness)?|affordable|budget[- ]friendly|save money|lowest cost)\b|"
+                     r"أرخص|أقل\s+تكلفة|اقتصادي|بميزانية\s+محدودة|توفير\s+المال", text, re.I):
             updates.append(FactValue(
                 field_name="value_priority", value="cost-effectiveness",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
-        elif re.search(r"\b(comfort|luxury|premium|five star)\b", text, re.I):
+        elif re.search(r"\b(comfort|luxury|premium|five star)\b|"
+                       r"فخامة|فاخر|مريح|راحة|فندق\s+خمس\s+نجوم|راحة\s+فاخرة", text, re.I):
             updates.append(FactValue(
                 field_name="value_priority", value="comfort",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
-        elif re.search(r"\b(best[- ]available service|top quality|best service|best care)\b", text, re.I):
+        elif re.search(r"\b(best[- ]available service|top quality|best service|best care)\b|"
+                       r"أفضل\s+خدمة|أعلى\s+جودة|أفضل\s+رعاية|خدمة\s+متميزة", text, re.I):
             updates.append(FactValue(
                 field_name="value_priority", value="best-available service",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
-        elif re.search(r"\b(speed|fastest|quickest|immediate)\b", text, re.I):
+        elif re.search(r"\b(speed|fastest|quickest|immediate)\b|"
+                       r"أسرع|بسرعة|فوراً|فورا|في\s+أسرع\s+وقت", text, re.I):
             updates.append(FactValue(
                 field_name="value_priority", value="speed",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,

@@ -3,14 +3,10 @@
 Ordered by dependency. ✅ = done this session.
 
 ## A. Implementable now (no external deps)
-1. ✅ **Knowledge DELETE** — `DELETE /v1/knowledge/documents/{id}` +
-   `KnowledgeStore.remove()` + retriever resync + test (287 tests pass).
-2. **Arabic-Indic digit parsing** (٣٤٥ → 345) in `_extract_facts` — small,
-   safe; improves AR intake.
-3. **Arabic budget/insurance/value-priority patterns** — extend existing
-   Appendix A extraction; needs native-speaker review of terms.
-4. **Dialect coverage** — Gulf/Levantine/Egyptian variants for key
-   intents; requires dialect review before merge.
+1. ✅ **Knowledge DELETE** — shipped (`717282e`).
+2. ✅ **Arabic-Indic digit parsing** — `_normalize_digits` maps ٠-٩/۰-۹ → ASCII before extraction.
+3. ✅ **Arabic budget/insurance/value-priority** — patterns added to `_extract_facts` (ميزانية، تأمين، أرخص/فاخر/أسرع…).
+4. 🟡 **Dialect coverage** — intent verbs added (عايز/أبغى/بدّي/محتاج/ودي); deeper dialect review still recommended.
 
 ## B. Requires infrastructure/access
 5. **Staging Supabase migration** — runbook ready; needs staging project
