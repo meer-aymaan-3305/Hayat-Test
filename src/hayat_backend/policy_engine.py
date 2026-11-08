@@ -161,18 +161,36 @@ EF_SCRIPTS_AR = {
 
 # HB-10 & EF-9: Medical emergencies (acute pain, breathing, bleeding, unconsciousness, stroke)
 _EMERGENCY_RE = re.compile(
-    r"\b(chest pain|heart attack|can't breathe|cannot breathe|severe bleeding|unconscious|"
-    r"stroke|difficulty breathing|shortness of breath|seizure|choking|head trauma|acute pain|"
-    r"severe acute pain|loss of consciousness)\b|"
-    r"(ألم شديد في الصدر|أزمة قلبية|لا أستطيع التنفس|نزيف شديد|فاقد الوعي|سكتة دماغية|صعوبة في التنفس|تشنجات)",
+    r"\b(chest pain|heart attack|cardiac arrest|can't breathe|cannot breathe|"
+    r"difficulty breathing|trouble breathing|not breathing|stop breathing|"
+    r"shortness of breath|severe bleeding|bleeding heavily|bleeding badly|hemorrhag\w*|"
+    r"unconscious|unresponsive|collapsed|passed out|feel faint|fainted|"
+    r"stroke|seizure|choking|head trauma|acute pain|severe acute pain|"
+    r"loss of consciousness|overdose|too many (?:pills|tablets|painkillers|medicine|medication)|"
+    r"anaphylaxis|anaphylactic|severe allergic reaction)\b|"
+    r"\b(?:he|she|they|someone|my (?:father|mother|dad|mum|mom|baby|child|son|daughter|wife|husband|friend|brother|sister)|"
+    r"the (?:man|woman|person|patient)) (?:has |is |was |keeps )?(?:collapsed|unresponsive|not responding|passed out|unconscious)\b|"
+    r"(ألم شديد في الصدر|أزمة قلبية|توقف القلب|لا أستطيع التنفس|لا أستطيع التنفس|صعوبة في التنفس|ضيق التنفس|"
+    r"لا يتنفس|لا أتنفس|تنفس بصعوبة|نزيف شديد|أنزف بشدة|نزيف غزير|فاقد الوعي|فقدان الوعي|إغماء|أغمي|أشعر بالإغماء|"
+    r"سكتة دماغية|جلطة|جلطة دماغية|تشنجات|اختناق|إصابة في الرأس|ألم حاد|"
+    r"جرعة زائدة|تناولت جرعة زائدة|تسمم|رد فعل تحسسي شديد|حساسية شديدة|"
+    r"سقط|سقطت|انهار|انهارت|لا يستجيب|لا تستجيب|لا يستجيبون|يفقد الوعي)",
     re.IGNORECASE,
 )
 
 # HB-10 & EF-10: Self-harm or crisis language
 _CRISIS_RE = re.compile(
     r"\b(suicide|suicidal|kill myself|end my life|want to die|self-harm|harm myself|"
-    r"cut myself|overdose|take my own life)\b|"
-    r"(انتحار|أفكار انتحارية|أريد أن أموت|إنهاء حياتي|إيذاء نفسي|قتل نفسي)",
+    r"cut myself|overdose|take my own life|"
+    r"do(?:es)? not want to live|don't want to live|no point in living|no point in (?:this )?life|"
+    r"better off without me|better off dead|thinking of hurting myself|thinking about hurting myself|"
+    r"thinking of killing myself|thinking about killing myself|end it all|"
+    r"wish i (?:was|were) dead|don't want to be here|do not want to be here|"
+    r"can't go on living|cannot go on living|no reason to live|nothing to live for)\b|"
+    r"(انتحار|أفكار انتحارية|أريد أن أموت|إنهاء حياتي|إيذاء نفسي|قتل نفسي|"
+    r"لا أريد أن أعيش|لا أريد العيش|لا فائدة من الحياة|لا فائدة من الوجود|"
+    r"أنهي حياتي|انهاء حياتي|أفكر في إيذاء نفسي|أفكر في قتل نفسي|"
+    r"لا أريد أن أكون هنا|أتمنى لو مت|لا طاقة للعيش|مستحيل أعيش|لا سبب للعيش)",
     re.IGNORECASE,
 )
 
@@ -265,6 +283,34 @@ _UNSOLICITED_PHI_RE = re.compile(
     r"(?:i am|i'm|currently)\s+(?:on|taking)\s+(?:insulin|metformin|warfarin|statins?|aspirin|chemotherapy|[a-z]+\s+medication))\b|"
     r"(أعاني من ألم شديد في|أعراضي هي|تم تشخيصي بـ|ضغط دمي|نتيجة التحليل كانت|أتناول دواء|جرعة|"
     r"(?:لدي|عندي|أعاني من) (?:مرض )?(?:السكري|السكر|سرطان|ضغط الدم|الربو))",
+    re.IGNORECASE,
+)
+
+# DP-4/DP-6: Contact identifiers and government ID numbers volunteered in chat.
+# These are stripped from the stored copy and the model input; structured lead
+# capture happens only through the approved secure flow.
+_CONTACT_IDENTIFIER_RE = re.compile(
+    r"[\w.+-]+@[\w-]+\.[\w.-]+|"  # email addresses
+    r"(?=(?:\D*\d){8})\+?\d[\d\s().-]{6,}\d",  # phone / ID-like digit strings (>=8 digits)
+    re.IGNORECASE,
+)
+
+# DP-5/DP-6: Named conditions, medications and symptom phrases volunteered in
+# chat. The stored copy and model input must not retain them even when the
+# surrounding sentence did not match the unsolicited-PHI patterns above.
+_VOLUNTEERED_CLINICAL_TERM_RE = re.compile(
+    r"\b(?:type\s+[12]\s+)?(?:diabetes|diabetic|hypertension|high blood pressure|hypotension|"
+    r"warfarin|insulin|metformin|sciatica|methotrexate|hiv|aids|cancer|carcinoma|"
+    r"tumou?r|asthma|arthritis|rheumatoid|osteoarthritis|stroke|epilepsy|hepatitis|"
+    r"osteoporosis|fibromyalgia|chemotherapy|radiotherapy|immunotherapy|statins?|"
+    r"aspirin|ibuprofen|paracetamol|morphine|oxycodone|prednisone|"
+    r"heart failure|heart disease|kidney failure|liver failure|multiple sclerosis|copd|"
+    r"heart is weak|weak heart|heart weakness|chest tightness|tightness in (?:my |the )?chest|"
+    r"shortness of breath|difficulty breathing|can't breathe|cannot breathe|"
+    r"severe pain|chronic pain|constant pain|paralysis|paralysed|paralyzed)\b|"
+    r"(السكري|داء السكري|السكر|سرطان|السرطان|ضغط الدم|ارتفاع ضغط الدم|الربو|"
+    r"التهاب المفاصل|صرع|فيروس|ميتفورمين|أنسولين|وارفارين|ألم شديد|"
+    r"قلبي ضعيف|ضعف القلب|ضيق التنفس|جلطة|جلطة دماغية|شلل)",
     re.IGNORECASE,
 )
 
@@ -608,6 +654,32 @@ class PolicyEnforcementEngine:
                     conversation_id=conversation_id,
                     category_tag="unsolicited clinical detail",
                     rule_id="DP-5",
+                )
+
+        # Redact named conditions, medications and symptom phrases that survived
+        # the pattern-level redaction above (DP-5/DP-6).
+        if _VOLUNTEERED_CLINICAL_TERM_RE.search(cleaned):
+            cleaned = _VOLUNTEERED_CLINICAL_TERM_RE.sub("[REDACTED_CLINICAL_DETAIL]", cleaned)
+            if "unsolicited clinical detail" not in categories:
+                categories.append("unsolicited clinical detail")
+            if session_id and conversation_id:
+                self.audit_store.log_redaction(
+                    session_id=session_id,
+                    conversation_id=conversation_id,
+                    category_tag="unsolicited clinical detail",
+                    rule_id="DP-5",
+                )
+
+        # Redact contact identifiers and ID-like numbers (DP-4).
+        if _CONTACT_IDENTIFIER_RE.search(cleaned):
+            cleaned = _CONTACT_IDENTIFIER_RE.sub("[REDACTED_CONTACT_DETAIL]", cleaned)
+            categories.append("contact identifier")
+            if session_id and conversation_id:
+                self.audit_store.log_redaction(
+                    session_id=session_id,
+                    conversation_id=conversation_id,
+                    category_tag="contact identifier",
+                    rule_id="DP-4",
                 )
 
         return cleaned, categories
