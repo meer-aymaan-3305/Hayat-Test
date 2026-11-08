@@ -73,33 +73,38 @@ class GroqWhisperSTT:
 
 
 class GroqPlayAITTS:
+    """Orpheus TTS (PlayAI was decommissioned by Groq on 2025-12-31)."""
+
     def __init__(self, settings: Settings) -> None:
         self._key = settings.groq_api_key.get_secret_value() if settings.groq_api_key else None
-        self._model = settings.groq_tts_model
+        self._model_en = settings.groq_tts_model_en
+        self._model_ar = settings.groq_tts_model_ar
         self._voice_en = settings.groq_tts_voice_en
         self._voice_ar = settings.groq_tts_voice_ar
 
     async def synthesize(self, text: str, language: str) -> tuple[bytes, str]:
         if not self._key:
             raise SpeechError("Text-to-speech is not configured.")
-        voice = self._voice_ar if language == "ar" else self._voice_en
+        arabic = language == "ar"
+        model = self._model_ar if arabic else self._model_en
+        voice = self._voice_ar if arabic else self._voice_en
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 res = await client.post(
                     f"{GROQ_BASE}/audio/speech",
                     headers={"Authorization": f"Bearer {self._key}"},
                     json={
-                        "model": self._model,
+                        "model": model,
                         "voice": voice,
                         "input": text,
-                        "response_format": "mp3",
+                        "response_format": "wav",
                     },
                 )
         except httpx.HTTPError as exc:
             raise SpeechError("Speech synthesis request failed.") from exc
         if res.status_code >= 400 or not res.content:
             raise SpeechError(f"Speech synthesis failed ({res.status_code}).")
-        return res.content, "audio/mpeg"
+        return res.content, "audio/wav"
 
 
 def create_stt(settings: Settings) -> SpeechToText:
