@@ -208,6 +208,24 @@ class KnowledgeStore:
         record.chunk_count = len(chunks)
         return record, chunks
 
+    def remove(self, document_id: str) -> bool:
+        """Remove a document and all its stored versions from the index.
+
+        Returns True if the document existed. Caller is responsible for
+        re-syncing the retriever afterwards."""
+        with self._lock:
+            index = self._load_index()
+            if document_id not in index.get("documents", {}):
+                return False
+            del index["documents"][document_id]
+            self._save_index(index)
+        for f in self.docs_dir.glob(f"{document_id}-v*.txt"):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+        return True
+
     def indexed_chunks(self) -> list[KnowledgeChunk]:
         """Rebuild retrievable chunks for all indexed documents (startup reload)."""
         chunks: list[KnowledgeChunk] = []

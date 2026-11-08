@@ -802,6 +802,19 @@ def create_app(
             for d in knowledge_store.list_documents()
         ]
 
+    @app.delete("/v1/knowledge/documents/{document_id}", tags=["knowledge"])
+    async def delete_knowledge_document(document_id: str):
+        """Remove an approved company knowledge document and all versions.
+
+        Staff-only (service token). Removes index entry and stored chunk
+        files, then re-syncs the retriever so the content is no longer
+        retrievable. Visitor attachments are unaffected (separate store).
+        """
+        if not knowledge_store.remove(document_id):
+            raise HTTPException(status_code=404, detail="Document not found.")
+        chat_service.retriever.replace_uploaded(knowledge_store.indexed_chunks())
+        return {"document_id": document_id, "status": "deleted"}
+
     # =========================================================================
     # Voice: speech-to-text chat and validated-reply text-to-speech
     # =========================================================================
