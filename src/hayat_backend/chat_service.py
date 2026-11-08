@@ -1027,7 +1027,7 @@ class ChatService:
             ))
 
         # Customer category selection & switching
-        if re.search(r"\b(medical treatment|medical care)\b|علاج طبي", text, re.IGNORECASE):
+        if re.search(r"\b(medical treatment|medical care)\b|علاج طبي|سفر\s+طبي|السفر\s+الطبي|عملية\s+طبية", text, re.IGNORECASE):
             updates.append(FactValue(
                 field_name="customer_category", value="medical_treatment",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
@@ -1036,7 +1036,7 @@ class ChatService:
                 field_name="care_category", value="medical",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
-        elif re.search(r"\b(wellness programme?|wellness program)\b|برنامج عافية", text, re.IGNORECASE):
+        elif re.search(r"\b(wellness programme?|wellness program)\b|برنامج عافية|تجربة عافية|رحلة عافية|برنامج لياقة|لياقة بدنية", text, re.IGNORECASE):
             updates.append(FactValue(
                 field_name="customer_category", value="wellness",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
@@ -1100,7 +1100,7 @@ class ChatService:
         # Wellness goal extraction
         wellness_patterns = [
             r"\b(mental health and stress management|mental health|stress management|stress|better sleep|sleep improvement|healthy ageing|healthy aging|longevity|detox|detoxification|mindfulness|weight management|burnout|holistic health|rehabilitation|recovery)\b",
-            r"(إدارة التوتر|الصحة النفسية|تحسين النوم|الشيخوخة الصحية|طول العمر|ديتوكس|استرخاء)",
+            r"(إدارة التوتر|الصحة النفسية|تحسين النوم|الشيخوخة الصحية|طول العمر|ديتوكس|استرخاء|لياقة|رشاقة|عافية|سبا|تأمل)",
         ]
         wellness_goal_found = False
         for wp in wellness_patterns:
@@ -1152,7 +1152,8 @@ class ChatService:
                     r"pulmonology|rheumatology|hematology|psychiatry|gynecology|obstetrics|"
                     r"dentistry|dental|dental implants|heart treatment|treatment for my heart|"
                     r"knee replacement|knee surgery|spine surgery|hair transplant|bariatric|cosmetic)\b|"
-                    r"\b[a-zA-Z]{3,}(?:ology|iatry|ics|surgery|therapy|plasty)\b",
+                    r"\b[a-zA-Z]{3,}(?:ology|iatry|ics|surgery|therapy|plasty)\b|"
+                    r"(قسطرة|قلب|أسنان|طب أسنان|عظام|جلدية|أورام|عيون|تجميل|خصوبة|أطفال|باطنية|علاج طبيعي)",
                     clean_sub or clean or text,
                     re.IGNORECASE,
                 )
@@ -1230,7 +1231,8 @@ class ChatService:
             r"(?:in|within)\s+\d+\s+(?:months?|weeks?)|"
             r"December|January|February|March|April|May|June|July|August|September|October|November|soon|asap|"
             r"weekday afternoons?|weekday mornings?|weekends?)\b|"
-            r"(يناير|فبراير|مارس|أبريل|مايو|يونيو|يوليو|أغسطس|سبتمبر|أكتوبر|نوفمبر|ديسمبر|شهر|أسبوع|قريبا|المقبل)",
+            r"(يناير|فبراير|مارس|أبريل|مايو|يونيو|يوليو|أغسطس|سبتمبر|أكتوبر|نوفمبر|ديسمبر|شهر|أسبوع|قريبا|المقبل|"
+            r"خلال\s+\S+\s+(?:أشهر|أسابيع|أيام)|خلال\s+(?:أشهر|أسابيع|أيام)|الشهر\s+المقبل|الأسبوع\s+المقبل)",
             text,
             re.IGNORECASE,
         )
@@ -1268,6 +1270,10 @@ class ChatService:
             "recovery": "recovery", "cardiology": "cardiology", "cardiac": "cardiology",
             "heart": "cardiology", "dermatology": "dermatology", "oncology": "oncology",
             "neurology": "neurology",
+            "قسطرة": "cardiology", "قلب": "cardiology", "أسنان": "dental", "طب أسنان": "dental",
+            "عظام": "orthopedic", "جلدية": "dermatology", "أورام": "oncology",
+            "تجميل": "aesthetic", "خصوبة": "fertility", "أطفال": "pediatrics",
+            "باطنية": "internal_medicine", "علاج طبيعي": "physiotherapy",
         }
         for term, value in service_terms.items():
             if re.search(rf"\b{term}\b", text, re.IGNORECASE):

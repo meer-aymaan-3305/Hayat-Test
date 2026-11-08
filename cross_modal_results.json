@@ -10,20 +10,20 @@
     "escalation": false,
     "sources": [],
     "handoff": false,
-    "ms": 45.8
+    "ms": 50.2
   },
   {
     "journey": "J01-first-visit",
     "mode": "text-ar",
     "in": "مرحباً، أستكشف خيارات طبية وخيارات عافية. ماذا تقدمون؟",
-    "reply": "مرحباً! العافية جزء كبير مما نقدمه — يمكنني إرشادك إلى التجربة المناسبة بعد معرفة هدفك. ما برنامج العافية أو الهدف الذي يهمك؟",
+    "reply": "مرحباً! مفهوم — أنت مهتم ببرنامج عافية. ما الوجهة التي تفضلها، أم ترغب في المساعدة في استكشاف الوجهات المتاحة؟",
     "lang": "ar",
     "state": "collecting_details",
     "next": "collect_detail",
     "escalation": false,
     "sources": [],
     "handoff": false,
-    "ms": 19.3
+    "ms": 16.5
   },
   {
     "journey": "J02-medical",
@@ -36,7 +36,7 @@
     "escalation": false,
     "sources": [],
     "handoff": false,
-    "ms": 17.0
+    "ms": 13.8
   },
   {
     "journey": "J02-medical",
@@ -49,7 +49,7 @@
     "escalation": false,
     "sources": [],
     "handoff": false,
-    "ms": 19.6
+    "ms": 15.0
   },
   {
     "journey": "J03-wellness",
@@ -62,20 +62,20 @@
     "escalation": false,
     "sources": [],
     "handoff": false,
-    "ms": 24.0
+    "ms": 14.7
   },
   {
     "journey": "J03-wellness",
     "mode": "text-ar",
     "in": "أبحث عن تجربة عافية. ما الخيارات المتاحة لديكم؟",
-    "reply": "مرحباً! العافية جزء كبير مما نقدمه — يمكنني إرشادك إلى التجربة المناسبة بعد معرفة هدفك. ما برنامج العافية أو الهدف الذي يهمك؟",
+    "reply": "مرحباً! مفهوم — أنت مهتم ببرنامج عافية. ما الوجهة التي تفضلها، أم ترغب في المساعدة في استكشاف الوجهات المتاحة؟",
     "lang": "ar",
     "state": "collecting_details",
     "next": "collect_detail",
     "escalation": false,
     "sources": [],
     "handoff": false,
-    "ms": 19.8
+    "ms": 14.9
   },
   {
     "journey": "J04-hayat100",
@@ -104,7 +104,7 @@
       }
     ],
     "handoff": false,
-    "ms": 23.9
+    "ms": 20.6
   },
   {
     "journey": "J04-hayat100",
@@ -133,7 +133,7 @@
       }
     ],
     "handoff": false,
-    "ms": 22.6
+    "ms": 12.0
   },
   {
     "journey": "J05-aafiya",
@@ -162,7 +162,7 @@
       }
     ],
     "handoff": false,
-    "ms": 21.5
+    "ms": 14.5
   },
   {
     "journey": "J05-aafiya",
@@ -191,7 +191,7 @@
       }
     ],
     "handoff": false,
-    "ms": 52.0
+    "ms": 13.7
   },
   {
     "journey": "J06-ffounders",
@@ -220,7 +220,7 @@
       }
     ],
     "handoff": false,
-    "ms": 23.2
+    "ms": 13.8
   },
   {
     "journey": "J06-ffounders",
@@ -249,7 +249,7 @@
       }
     ],
     "handoff": false,
-    "ms": 22.5
+    "ms": 14.2
   },
   {
     "journey": "J07-ambiguous",
@@ -262,7 +262,7 @@
     "escalation": false,
     "sources": [],
     "handoff": false,
-    "ms": 20.3
+    "ms": 14.8
   },
   {
     "journey": "J07-ambiguous",
@@ -275,7 +275,7 @@
     "escalation": false,
     "sources": [],
     "handoff": false,
-    "ms": 26.1
+    "ms": 14.4
   },
   {
     "journey": "J08-unsupported",
@@ -304,7 +304,7 @@
       }
     ],
     "handoff": false,
-    "ms": 21.1
+    "ms": 15.1
   },
   {
     "journey": "J08-unsupported",
@@ -333,7 +333,7 @@
       }
     ],
     "handoff": false,
-    "ms": 32.7
+    "ms": 12.9
   },
   {
     "journey": "J09-provider",
@@ -346,7 +346,7 @@
     "escalation": false,
     "sources": [],
     "handoff": false,
-    "ms": 23.0
+    "ms": 12.4
   },
   {
     "journey": "J09-provider",
@@ -359,7 +359,7 @@
     "escalation": false,
     "sources": [],
     "handoff": false,
-    "ms": 81.4
+    "ms": 21.4
   },
   {
     "journey": "J10-clinical",
@@ -372,7 +372,7 @@
     "escalation": true,
     "sources": [],
     "handoff": false,
-    "ms": 41.5
+    "ms": 12.6
   },
   {
     "journey": "J10-clinical",
@@ -385,7 +385,7 @@
     "escalation": true,
     "sources": [],
     "handoff": false,
-    "ms": 31.7
+    "ms": 11.7
   },
   {
     "journey": "J11-context",
@@ -400,7 +400,7 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 119.7
+        "ms": 13.6
       },
       {
         "in": "Cardiology.",
@@ -411,7 +411,7 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 23.1
+        "ms": 42.8
       },
       {
         "in": "India.",
@@ -422,7 +422,7 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 21.7
+        "ms": 13.2
       },
       {
         "in": "Next three months.",
@@ -433,7 +433,7 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 17.3
+        "ms": 15.2
       }
     ]
   },
@@ -450,40 +450,40 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 16.3
+        "ms": 13.5
       },
       {
         "in": "قسطرة قلب.",
-        "reply": "هل تود المساعدة في علاج طبي أم في برنامج عافية؟",
+        "reply": "مفهوم — أنت مهتم بعلاج قسطرة. ما الوجهة التي تفضلها، أم ترغب في المساعدة في استكشاف الوجهات المتاحة؟",
         "lang": "ar",
         "state": "collecting_details",
-        "next": "answer",
+        "next": "collect_detail",
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 19.8
+        "ms": 13.4
       },
       {
         "in": "الهند.",
-        "reply": "هل تود المساعدة في علاج طبي أم في برنامج عافية؟",
+        "reply": "مفهوم — أنت مهتم بعلاج قسطرة. ما الإطار الزمني الأنسب لك؟",
         "lang": "ar",
         "state": "collecting_details",
-        "next": "answer",
+        "next": "collect_detail",
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 20.2
+        "ms": 12.1
       },
       {
         "in": "خلال ثلاثة أشهر.",
-        "reply": "هل تود المساعدة في علاج طبي أم في برنامج عافية؟",
+        "reply": "مفهوم — أنت مهتم بعلاج قسطرة. هل ترغب في طلب استشارة مع منسق بناءً على هذه التفاصيل؟",
         "lang": "ar",
-        "state": "collecting_details",
-        "next": "answer",
+        "state": "offering_consultation",
+        "next": "offer_consultation",
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 16.1
+        "ms": 16.4
       }
     ]
   },
@@ -500,7 +500,7 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 16.5
+        "ms": 14.8
       },
       {
         "in": "Turkey.",
@@ -511,7 +511,7 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 13.4
+        "ms": 13.5
       },
       {
         "in": "Next month.",
@@ -522,7 +522,7 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 14.5
+        "ms": 14.8
       },
       {
         "in": "Budget is flexible.",
@@ -533,7 +533,7 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 14.5
+        "ms": 14.0
       },
       {
         "in": "Video consultation please.",
@@ -544,7 +544,7 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 16.4
+        "ms": 13.6
       },
       {
         "in": "No, I do not consent to sharing my details.",
@@ -555,7 +555,7 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 16.2
+        "ms": 14.3
       }
     ]
   },
@@ -572,7 +572,7 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 16.5
+        "ms": 14.8
       },
       {
         "in": "Turkey.",
@@ -583,7 +583,7 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 16.1
+        "ms": 12.0
       },
       {
         "in": "Next month.",
@@ -594,7 +594,7 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 14.9
+        "ms": 13.8
       },
       {
         "in": "Budget is flexible.",
@@ -605,7 +605,7 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 14.6
+        "ms": 13.7
       },
       {
         "in": "Video consultation please.",
@@ -616,7 +616,7 @@
         "escalation": false,
         "sources": [],
         "handoff": false,
-        "ms": 16.0
+        "ms": 14.5
       },
       {
         "in": "Yes, I confirm. Please share my summary.",
@@ -627,7 +627,7 @@
         "escalation": false,
         "sources": [],
         "handoff": true,
-        "ms": 14.3
+        "ms": 14.7
       }
     ]
   },
@@ -635,9 +635,9 @@
     "journey": "V-stt-nonspeech",
     "mode": "voice-en",
     "status": 200,
-    "ms": 323.1,
+    "ms": 306.2,
     "body": {
-      "conversation_id": "c9ed5428-fa83-461b-891b-0ca90d4c8d1c",
+      "conversation_id": "65a0b9a3-47b8-4268-87ed-dbe7be93dc3a",
       "transcript": "you",
       "detected_language": "English",
       "reply": "Hello! Would you like help with a medical treatment or a wellness programme?",
@@ -645,7 +645,7 @@
       "escalation_required": false,
       "suggested_actions": [],
       "conversation_state": "requested",
-      "message_id": "9be07a93-33d8-4621-be45-948f5eead72d"
+      "message_id": "47e3c34b-118e-4780-ac00-929054570c51"
     }
   }
 ]
