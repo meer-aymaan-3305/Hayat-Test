@@ -50,3 +50,14 @@ at the console links above — or supply the correct org's key.
   `/v1/voice/chat` → verify transcription accuracy.
 
 No credentials exposed; no flags changed; no deploy/migration/push.
+
+## Org identification attempt (2026-11-08)
+Probed Groq account/org metadata endpoints with the configured key:
+`/organization`, `/v1/organization`, `/user`, `/api-keys`, `/billing` →
+all 404 (not exposed by the public API). `GET /models` → 200 and lists
+both Orpheus models `active: true` — the models are visible to this
+key's org but carry **no terms-acceptance or org-identity fields**.
+**Limitation: the organisation behind GROQ_API_KEY cannot be identified
+via the API.** Whether it matches the org where terms were accepted
+cannot be confirmed programmatically — admin must verify in the console
+(API Keys page shows the owning org).
