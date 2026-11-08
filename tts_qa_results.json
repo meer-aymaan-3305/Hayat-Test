@@ -1,0 +1,15 @@
+{
+  "english": {
+    "model": "canopylabs/orpheus-v1-english",
+    "voice": "austin",
+    "status": 400,
+    "code": "model_terms_required"
+  },
+  "arabic": {
+    "model": "canopylabs/orpheus-arabic-saudi",
+    "voice": "abdullah",
+    "status": 400,
+    "code": "model_terms_required"
+  },
+  "note": "terms acceptance pending org admin; urllib 403/1010 was Cloudflare UA block, httpx reached API"
+}
