@@ -35,6 +35,14 @@ defect — nothing to fix in Hayat.
    - `.../playground?model=canopylabs%2Forpheus-arabic-saudi`
 3. Notify — re-run `scripts/qa_session3_voice.py` T01 + AR round-trip.
 
+## Re-check after reported acceptance (2026-11-08, commit ad407bb+)
+Retried both models via httpx: **still HTTP 400 `model_terms_required`**.
+API key verified valid (`GET /models` → 200). Conclusion: terms were
+either accepted under a **different Groq organisation** than the one this
+API key belongs to, acceptance hasn't propagated, or the wrong key is in
+`.env`. Required: confirm the org that owns `GROQ_API_KEY` accepted terms
+at the console links above — or supply the correct org's key.
+
 ## Acceptance tests once unblocked
 - EN: synthesize stored assistant message → non-empty WAV, correct voice,
   playable; feed to `/v1/voice/chat` → Whisper transcript → chat reply.

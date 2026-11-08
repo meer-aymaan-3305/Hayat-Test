@@ -11,5 +11,6 @@
     "status": 400,
     "code": "model_terms_required"
   },
-  "note": "terms acceptance pending org admin; urllib 403/1010 was Cloudflare UA block, httpx reached API"
+  "api_key_valid": true,
+  "note": "terms still required after reported acceptance \u2014 likely wrong org/key or propagation; models endpoint 200"
 }
