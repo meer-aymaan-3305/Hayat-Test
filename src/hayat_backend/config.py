@@ -24,6 +24,9 @@ class Settings(BaseModel):
     jwt_system_secret: SecretStr | None = None
     groq_api_key: SecretStr | None = None
     groq_model: str = "allam-2-7b"
+    groq_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    groq_max_tokens: int = Field(default=160, ge=1, le=4096)
+    groq_timeout_seconds: float = Field(default=20.0, ge=1.0, le=120.0)
     supabase_url: str | None = None
     supabase_service_role_key: SecretStr | None = None
     allowed_origins: list[str] = Field(default_factory=list)
@@ -86,6 +89,9 @@ def load_settings() -> Settings:
             jwt_system_secret=values.get("JWT_SYSTEM_SECRET") or None,
             groq_api_key=values.get("GROQ_API_KEY"),
             groq_model=values.get("GROQ_MODEL", "allam-2-7b"),
+            groq_temperature=values.get("GROQ_TEMPERATURE", 0.2),
+            groq_max_tokens=values.get("GROQ_MAX_TOKENS", 160),
+            groq_timeout_seconds=values.get("GROQ_TIMEOUT_SECONDS", 20.0),
             supabase_url=values.get("SUPABASE_URL"),
             supabase_service_role_key=values.get("SUPABASE_SERVICE_ROLE_KEY"),
             allowed_origins=[
