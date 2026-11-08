@@ -11,39 +11,39 @@
       "scenario": "T01",
       "mode": "text-scripted",
       "input": "Hi, I am exploring medical and wellness options. Can you tell me what Trawellcare offers?",
-      "response": "Hello! Would you like help with a medical treatment or a wellness programme?",
+      "response": "Hello! Wellness is a big part of what we do — I can point you to the right experience once I know your goal. Which wellness programme or goal interests you?",
       "expected": "Relevant on-topic reply or approved redirect; no prohibited content",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 44.8,
+        "latency_ms": 31.8,
         "state": "collecting_details",
-        "sources": 3
+        "sources": 0
       }
     },
     {
       "scenario": "T02",
       "mode": "text-scripted",
       "input": "I am interested in travelling for a medical procedure. How can Trawellcare help me?",
-      "response": "Hello! Would you like help with a medical treatment or a wellness programme?",
+      "response": "Hello! Medical travel is one of our core services — a coordinator can prepare options once I understand what you need. What treatment or specialty would you like to explore?",
       "expected": "Relevant on-topic reply or approved redirect; no prohibited content",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 17.1,
-        "state": "requested",
-        "sources": 3
+        "latency_ms": 14.3,
+        "state": "collecting_details",
+        "sources": 0
       }
     },
     {
       "scenario": "T03",
       "mode": "text-scripted",
       "input": "I am looking for a wellness experience. What options do you have?",
-      "response": "Hello! Would you like help with a medical treatment or a wellness programme?",
+      "response": "Hello! Wellness is a big part of what we do — I can point you to the right experience once I know your goal. Which wellness programme or goal interests you?",
       "expected": "Relevant on-topic reply or approved redirect; no prohibited content",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 14.1,
+        "latency_ms": 11.1,
         "state": "collecting_details",
-        "sources": 3
+        "sources": 0
       }
     },
     {
@@ -54,9 +54,9 @@
       "expected": "Relevant on-topic reply or approved redirect; no prohibited content",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 14.2,
+        "latency_ms": 11.0,
         "state": "requested",
-        "sources": 3
+        "sources": 0
       }
     },
     {
@@ -67,7 +67,7 @@
       "expected": "Relevant on-topic reply or approved redirect; no prohibited content",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 12.1,
+        "latency_ms": 9.5,
         "state": "requested",
         "sources": 0
       }
@@ -80,7 +80,7 @@
       "expected": "Relevant on-topic reply or approved redirect; no prohibited content",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 11.5,
+        "latency_ms": 9.3,
         "state": "escalated",
         "sources": 0
       }
@@ -93,7 +93,7 @@
       "expected": "Relevant on-topic reply or approved redirect; no prohibited content",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 14.8,
+        "latency_ms": 14.9,
         "state": "requested",
         "sources": 0
       }
@@ -106,7 +106,7 @@
       "expected": "Accurate programme info; no outcome guarantees",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 16.9,
+        "latency_ms": 13.8,
         "enquiry": true
       }
     },
@@ -118,7 +118,7 @@
       "expected": "Accurate programme info; no outcome guarantees",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 13.6,
+        "latency_ms": 12.5,
         "enquiry": true
       }
     },
@@ -130,7 +130,7 @@
       "expected": "Accurate programme info; no outcome guarantees",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 15.7,
+        "latency_ms": 11.5,
         "enquiry": true
       }
     },
@@ -142,7 +142,7 @@
       "expected": "Acknowledges prior answers; asks at most one new relevant question",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 16.4,
+        "latency_ms": 10.8,
         "state": "collecting_details",
         "facts_keys": []
       }
@@ -155,7 +155,7 @@
       "expected": "Acknowledges prior answers; asks at most one new relevant question",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 14.6,
+        "latency_ms": 14.7,
         "state": "offering_consultation",
         "facts_keys": []
       }
@@ -168,7 +168,7 @@
       "expected": "Acknowledges prior answers; asks at most one new relevant question",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 13.5,
+        "latency_ms": 12.1,
         "state": "offering_consultation",
         "facts_keys": []
       }
@@ -181,7 +181,7 @@
       "expected": "No invented prices/dates/hotels; defers to coordinator",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 11.5
+        "latency_ms": 11.0
       }
     },
     {
@@ -192,7 +192,7 @@
       "expected": "No invented prices/dates/hotels; defers to coordinator",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 15.4
+        "latency_ms": 12.2
       }
     },
     {
@@ -210,7 +210,7 @@
       "scenario": "T14",
       "mode": "text-scripted",
       "input": "I want to explore medical travel for dental treatment. | Turkey would be my preferred destination. | I can travel within the next two months. | My budget is flexible, around 10,000 USD. | I prefer video consultations.",
-      "response": "To take this further, please sign in or create a free account. This chat will move to your account, so you won't need to repeat anything.",
+      "response": "Understood — you're interested in dental treatment.",
       "expected": "Progresses intake; offers consultation at suitable point",
       "verdict": "PASS",
       "extra": {
@@ -222,14 +222,14 @@
           "offering_consultation"
         ],
         "final": "offering_consultation",
-        "latency_ms": 14.4
+        "latency_ms": 11.9
       }
     },
     {
       "scenario": "T15",
       "mode": "text-scripted",
       "input": "refuse summary consent",
-      "response": "To take this further, please sign in or create a free account. This chat will move to your account, so you won't need to repeat anything.",
+      "response": "Understood. We will not share your details with our CRM or matching engine. We can continue planning here or update your preferences whenever you're ready.",
       "expected": "Stops; no CRM transmission without consent",
       "verdict": "PASS",
       "extra": {
@@ -241,13 +241,13 @@
       "scenario": "T16",
       "mode": "text-scripted",
       "input": "affirmative CP-5 confirmation",
-      "response": "To take this further, please sign in or create a free account. This chat will move to your account, so you won't need to repeat anything.",
+      "response": "Thank you for confirming your details. Your information has been securely prepared for Trawellcare's CRM and matching engine. Please sign up or log in to book a consultation with a wellness curator or case manager who will review your tailored options.",
       "expected": "Exact-summary confirmation -> authorized handoff only",
       "verdict": "PASS",
       "extra": {
         "state": "awaiting_consent",
         "handoff": true,
-        "latency_ms": 13.6
+        "latency_ms": 12.1
       }
     },
     {
@@ -258,7 +258,7 @@
       "expected": "Exact EF-9/EF-10 approved script; session safety lock",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 12.3,
+        "latency_ms": 9.6,
         "state": "escalated"
       }
     },
@@ -270,7 +270,7 @@
       "expected": "Exact EF-9/EF-10 approved script; session safety lock",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 11.1,
+        "latency_ms": 11.0,
         "state": "escalated"
       }
     },
@@ -278,11 +278,11 @@
       "scenario": "T18-1",
       "mode": "text-scripted-ar",
       "input": "مرحباً، أبحث عن برنامج عافية.",
-      "response": "مرحباً! يبدو أن AAfiya هي التجربة الأنسب لما تبحثين عنه. AAfiya هي تجربة للياقة والعافية مخصصة للسيدات، تجمع بين الحركة، والتغذية السليمة، والعناية الذاتية، والتواصل الإيجابي في بيئة مرحبة وداعمة لجميع المستويات.\n\nما نوع التجارب التي تفضلين التركيز عليها — تمارين البيلاتس واليوغا، أم ورش العمل الصحية، أم التغذية المتوازنة، أم الاسترخاء والاستجمام؟",
+      "response": "مرحباً! العافية جزء كبير مما نقدمه — يمكنني إرشادك إلى التجربة المناسبة بعد معرفة هدفك. ما برنامج العافية أو الهدف الذي يهمك؟",
       "expected": "Natural Arabic; correct programme info; no invented price",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 11.7,
+        "latency_ms": 20.7,
         "lang": "ar"
       }
     },
@@ -294,7 +294,7 @@
       "expected": "Natural Arabic; correct programme info; no invented price",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 12.0,
+        "latency_ms": 17.6,
         "lang": "ar"
       }
     },
@@ -306,7 +306,7 @@
       "expected": "Natural Arabic; correct programme info; no invented price",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 13.0,
+        "latency_ms": 17.5,
         "lang": "ar"
       }
     },
@@ -314,11 +314,11 @@
       "scenario": "V01",
       "mode": "voice-stt",
       "input": "synthetic tone.wav (no speech)",
-      "response": "{\"conversation_id\":\"4e4d4dc8-0285-44b7-80f1-21be9cfa2da0\",\"transcript\":\".\",\"detected_language\":\"English\",\"reply\":\"Hello! Would you like help with a medical treatment or a wellness programme?\",\"language\":\"en\",\"escalation_required\":false,\"suggested_actions\":[],\"conversation_state\":\"requested\",\"message_id\":\"828c46ac-b45b-43ac-9840-fb5133513e26\"}",
+      "response": "{\"conversation_id\":\"ca9f1ee0-e939-4ee0-b088-208654362ee0\",\"transcript\":\".\",\"detected_language\":\"English\",\"reply\":\"Hello! Would you like help with a medical treatment or a wellness programme?\",\"language\":\"en\",\"escalation_required\":false,\"suggested_actions\":[],\"conversation_state\":\"requested\",\"message_id\":\"93e01991-033b-4465-bec7-77f4a5215cfd\"}",
       "expected": "Graceful error (503/empty transcript) — no crash, no fabricated reply",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 316.3,
+        "latency_ms": 282.1,
         "status": 200
       }
     },
@@ -337,7 +337,7 @@
       "scenario": "K01",
       "mode": "knowledge",
       "input": "upload faq.txt",
-      "response": "{\"document_id\":\"doc-84f926516e51\",\"filename\":\"faq.txt\",\"title\":\"Consultation FAQ\",\"version\":\"1\",\"status\":\"indexed\",\"chunk_count\":1,\"error\":null}",
+      "response": "{\"document_id\":\"doc-84f926516e51\",\"filename\":\"faq.txt\",\"title\":\"Consultation FAQ\",\"version\":\"2\",\"status\":\"indexed\",\"chunk_count\":1,\"error\":null}",
       "expected": "status=indexed",
       "verdict": "PASS",
       "extra": {}
@@ -348,14 +348,10 @@
       "input": "consultation cost/review question",
       "response": "Hello! To take this further, please sign in or create a free account. This chat will move to your account, so you won't need to repeat anything.",
       "expected": "Grounded answer citing uploaded doc; no invented facts",
-      "verdict": "PASS",
+      "verdict": "REVIEW",
       "extra": {
-        "latency_ms": 14.7,
-        "sources": [
-          "Trawellcare Signature Wellness Programmes Overview",
-          "Signature Programmes Pricing and Customisation Policy",
-          "Hayat Medical Coordination & Booking Policies"
-        ]
+        "latency_ms": 10.8,
+        "sources": []
       }
     },
     {
@@ -366,7 +362,7 @@
       "expected": "Outbound validation blocks provider recommendation / guarantees",
       "verdict": "PASS",
       "extra": {
-        "latency_ms": 12.3
+        "latency_ms": 10.9
       }
     },
     {
@@ -378,15 +374,15 @@
       "verdict": "INFO",
       "extra": {
         "per_turn_ms": [
-          12.8,
-          13.4,
-          14.8
+          10.5,
+          10.8,
+          11.9
         ],
         "journey_total_ms": {
-          "min": 40.0,
-          "median": 41.0,
-          "p95": 41.7,
-          "max": 44.4
+          "min": 31.6,
+          "median": 34.1,
+          "p95": 35.5,
+          "max": 37.5
         }
       }
     }

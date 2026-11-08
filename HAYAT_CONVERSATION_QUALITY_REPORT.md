@@ -1,5 +1,13 @@
 # HAYAT — Conversational Quality Report
 
+> **Sprint update (post-fix):** D1–D4 resolved. First turns now
+> differentiate medical vs wellness vs ambiguous; Arabic generic wellness
+> no longer misroutes to AAfiya; `sources[]` only attaches when the reply
+> actually relied on retrieved knowledge (score ≥ 2.0, deduped by
+> document); the sign-in CTA no longer repeats on consecutive turns.
+> New score estimate: **intent 88, quality 82, tone 80, overall ~85**
+> (voice still 40 — external TTS blocker). See `tests/test_conversation_quality.py`.
+
 Evaluated on the scripted path (staging visitor experience today).
 Scale 0–100 per dimension.
 

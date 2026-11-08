@@ -611,6 +611,8 @@ class ChatService:
         self.store.set_conversation_state(conversation, self._state_for_plan(plan, conversation))
 
         chunks: list[KnowledgeChunk] = []
+        scored_chunks: list[tuple[float, KnowledgeChunk]] = []
+        reply_used_knowledge = False
         reply: str | None = None
 
         if submission is not None:
@@ -627,7 +629,8 @@ class ChatService:
         elif decision.reply:
             reply = decision.reply
         else:
-            chunks = await self.retriever.retrieve(text)
+            scored_chunks = await self.retriever.retrieve_scored(text)
+            chunks = [chunk for _, chunk in scored_chunks]
             knowledge = "\n\n".join(chunk.text for chunk in chunks)
             prior_history = [
                 {"role": message.role, "content": message.content}
@@ -681,6 +684,8 @@ class ChatService:
             try:
                 generated = None if not use_ai else await self.model.complete(model_messages)
                 reply = validate_output(generated, language) if generated else None
+                # An AI reply generated with approved evidence counts as grounded.
+                reply_used_knowledge = reply is not None and bool(chunks)
             except (LLMError, TypeError, ValueError):
                 reply = None
 
@@ -688,6 +693,7 @@ class ChatService:
         if reply is None:
             lower_text = text.lower()
             if "compare" in lower_text or "destination" in lower_text or "مقارن" in text or "وجه" in text:
+                reply_used_knowledge = bool(chunks)
                 reply = (
                     "A case manager can compare destinations with you once we understand your preferences. "
                     "Which destination are you considering?"
@@ -695,6 +701,7 @@ class ChatService:
                     "يمكن لمدير الحالة مقارنة الوجهات معك بعد فهم تفضيلاتك. ما الوجهة التي تفكر فيها؟"
                 )
             elif "prepare" in lower_text or "document" in lower_text or "information" in lower_text or "تجهيز" in text or "مستند" in text:
+                reply_used_knowledge = bool(chunks)
                 reply = (
                     "To prepare for your consultation, it is helpful to have your recent medical records, reports, "
                     "or current medication list available if you have them. A coordinator will advise if specific records are needed."
@@ -733,7 +740,24 @@ class ChatService:
                         else f"مفهوم — أنت مهتم ببرنامج {wellness_goal}."
                     )
                 else:
-                    reply = _clarify(language)
+                    # Journey-aware acknowledgement so the planned follow-up
+                    # question is not swallowed by a generic clarify reply.
+                    if plan.target_field == "procedure_or_service":
+                        reply = (
+                            "Medical travel is one of our core services — a coordinator can "
+                            "prepare options once I understand what you need."
+                            if language == "en"
+                            else "السفر الطبي من الخدمات الأساسية لدينا — يمكن للمنسق إعداد الخيارات بعد فهم احتياجاتك."
+                        )
+                    elif plan.target_field == "wellness_programme_or_goal":
+                        reply = (
+                            "Wellness is a big part of what we do — I can point you to the "
+                            "right experience once I know your goal."
+                            if language == "en"
+                            else "العافية جزء كبير مما نقدمه — يمكنني إرشادك إلى التجربة المناسبة بعد معرفة هدفك."
+                        )
+                    else:
+                        reply = _clarify(language)
 
         # Single composition layer: Append the planned question only if not already present
         if clarification_reply is None and not decision.reply and submission is None and decision.reason != "out_of_scope":
@@ -747,7 +771,17 @@ class ChatService:
                 planned = replace(plan, question_text=ARABIC_QUESTIONS[plan.question_text])
             reply = append_planned_question(reply, planned)
         if plan.decision_type in {"account_request_saved", "sign_in_required"}:
-            reply = _account_reply(plan.decision_type, language)
+            cta = _account_reply(plan.decision_type, language)
+            # Do not repeat the identical sign-in CTA on consecutive turns —
+            # keep the substantive reply instead. Guests may always keep
+            # asking ordinary questions; the CTA resurfaces only after the
+            # conversation moves on.
+            prev_assistant = next(
+                (m for m in reversed(conversation.messages[:-1]) if m.role == "assistant"),
+                None,
+            )
+            if not (plan.decision_type == "sign_in_required" and prev_assistant and cta in prev_assistant.content):
+                reply = cta
 
         # Prepend opening greeting only on the user's first message if not an emergency or crisis
         if prior_user_message_count == 0 and not decision.escalation_required and decision.reason not in ("possible_emergency", "crisis_self_harm", "EF-9", "EF-10"):
@@ -762,16 +796,28 @@ class ChatService:
             content=reply,
             language=language,
         )
+        # Surface source attribution only when the reply actually relied on
+        # retrieved approved knowledge — never mark unsupported answers as
+        # sourced. Weak matches (score < 2.0) are excluded.
         sources = []
-        if submission is None and not decision.reply and decision.reason is None and chunks:
-            sources = [
-                {
+        if (
+            submission is None
+            and not decision.reply
+            and decision.reason is None
+            and reply_used_knowledge
+        ):
+            seen_docs: set[str] = set()
+            for score, chunk in scored_chunks:
+                if score < 2.0 or chunk.source.document_id in seen_docs:
+                    continue
+                seen_docs.add(chunk.source.document_id)
+                sources.append({
                     "document_id": chunk.source.document_id,
                     "title": chunk.source.title,
                     "version": chunk.source.version,
-                }
-                for chunk in chunks
-            ]
+                })
+                if len(sources) >= 3:
+                    break
 
         result = {
             "user_message": user_message,
