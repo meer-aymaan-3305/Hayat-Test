@@ -1,5 +1,7 @@
 # Hayat backend
 
+Start with the handover from the backend developer: `docs/handover/HAYAT_BACKEND_HANDOVER.md`, `docs/handover/HAYAT_API_REFERENCE.md` and `docs/handover/HAYAT_EXTERNAL_DEPENDENCIES.md`. All other QA and readiness reports are in `docs/handover/`, and the QA scripts are in `scripts/qa/`.
+
 The API uses Supabase as the durable repository whenever valid server-side
 Supabase settings are configured. Local tests inject an in-memory repository
 and never write test data to Supabase.

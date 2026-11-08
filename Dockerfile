@@ -44,6 +44,12 @@ WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 # An ordinary user with no login shell, instead of root.
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin hayat
+# Uploaded knowledge documents and attachments live here. Mount a volume on
+# /app/data so they survive a redeploy (Hayat runs as exactly one container).
+RUN mkdir -p /app/data/knowledge /app/data/attachments && chown -R hayat /app/data
+ENV KNOWLEDGE_DIR=/app/data/knowledge \
+    ATTACHMENTS_DIR=/app/data/attachments
+VOLUME /app/data
 USER hayat
 EXPOSE 2005
 # /health is open (no service token needed) and does not call Groq or Supabase.

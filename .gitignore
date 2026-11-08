@@ -18,3 +18,9 @@ wheels/
 supabase/.temp/
 
 .env
+
+# Knowledge documents uploaded at run time (KNOWLEDGE_DIR) and attachments.
+data/
+
+# Output written by the QA scripts in scripts/qa/.
+*_results.json
