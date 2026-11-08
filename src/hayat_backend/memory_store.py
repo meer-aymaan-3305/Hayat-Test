@@ -99,6 +99,7 @@ class MemoryStore:
         self._handoffs: dict[UUID, CoordinatorHandoff] = {}
         self._programme_enquiries: dict[UUID, SignatureProgrammeEnquiry] = {}
         self._otp_challenges: dict[str, tuple[UUID, str]] = {}
+        self._visitor_documents: dict[UUID, "VisitorDocument"] = {}
         self._idempotent_chat: dict[tuple[UUID, str], dict[str, object]] = {}
         self.audit_store: ComplianceAuditStore = global_audit_store
 
@@ -213,11 +214,14 @@ class MemoryStore:
 
     def has_valid_consent(self, session_id: UUID | str, consent_type: str) -> bool:
         sid = _as_uuid(session_id)
-        records = self._consents.get(sid, [])
-        return any(
-            record.get("consent_type") == consent_type and record.get("granted") is True
-            for record in records
-        )
+        records = [
+            record for record in self._consents.get(sid, [])
+            if record.get("consent_type") == consent_type
+        ]
+        if not records:
+            return False
+        # Latest recorded decision wins so withdrawals invalidate consent.
+        return records[-1].get("granted") is True
 
     def consultation_progress(self, conversation: Conversation) -> ConsultationProgress:
         category = (
@@ -452,6 +456,64 @@ class MemoryStore:
             enquiry = SignatureProgrammeEnquiry.model_validate(data)
         self.save_programme_enquiry(enquiry)
         return enquiry
+
+    # ------------------------------------------------------------------
+    # Visitor medical documents (session-scoped, flag-gated at API layer)
+    # ------------------------------------------------------------------
+
+    def save_visitor_document(self, doc: "VisitorDocument") -> "VisitorDocument":
+        self._visitor_documents[doc.id] = doc
+        return doc
+
+    def get_visitor_document(self, document_id: UUID | str) -> "VisitorDocument | None":
+        from .visitor_documents import VisitorDocument  # noqa: F401
+        try:
+            did = document_id if isinstance(document_id, UUID) else UUID(str(document_id))
+        except (ValueError, AttributeError):
+            return None
+        return self._visitor_documents.get(did)
+
+    def list_visitor_documents(
+        self,
+        session_id: UUID | str,
+        conversation_id: UUID | str | None = None,
+        include_deleted: bool = False,
+    ) -> list["VisitorDocument"]:
+        sid = _as_uuid(session_id)
+        cid = _as_uuid(conversation_id) if conversation_id else None
+        docs = [
+            d for d in self._visitor_documents.values()
+            if d.session_id == sid
+            and (cid is None or d.conversation_id == cid)
+            and (include_deleted or d.status != "deleted")
+        ]
+        return sorted(docs, key=lambda d: d.created_at)
+
+    def delete_visitor_document(self, document_id: UUID | str) -> "VisitorDocument | None":
+        doc = self.get_visitor_document(document_id)
+        if doc is None or doc.status == "deleted":
+            return None
+        doc.status = "deleted"
+        doc.deleted_at = datetime.now(UTC)
+        return doc
+
+    def withdraw_visitor_document_consent(self, session_id: UUID | str) -> int:
+        """Mark every live document for the session deleted after consent
+        withdrawal. Returns the number of documents removed."""
+        sid = _as_uuid(session_id)
+        count = 0
+        for doc in self._visitor_documents.values():
+            if doc.session_id == sid and doc.status != "deleted":
+                doc.status = "deleted"
+                doc.deleted_at = datetime.now(UTC)
+                count += 1
+        self.record_consent(sid, {
+            "consent_type": "visitor_document_processing",
+            "granted": False,
+            "consent_version": "visitor-docs-v1",
+            "withdrawn_at": datetime.now(UTC).isoformat(),
+        })
+        return count
 
     def export_conversation(self, conversation: Conversation) -> dict[str, object]:
         return {

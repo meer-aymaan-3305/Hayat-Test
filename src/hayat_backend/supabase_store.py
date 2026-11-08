@@ -59,6 +59,7 @@ class SupabaseStore:
         self._idempotent_chat: dict[tuple[UUID, str], dict[str, object]] = {}
         self._memory_handoffs: dict[UUID, CoordinatorHandoff] = {}
         self._memory_programme_enquiries: dict[UUID, SignatureProgrammeEnquiry] = {}
+        self._memory_visitor_documents: dict[UUID, "VisitorDocument"] = {}
 
     @staticmethod
     def hash_token(raw_token: str) -> str:
@@ -399,9 +400,11 @@ class SupabaseStore:
 
     def has_valid_consent(self, session_id: UUID, consent_type: str) -> bool:
         try:
-            rows = self.client.table("consent_records").select("granted").eq(
+            rows = self.client.table("consent_records").select(
+                "granted,recorded_at"
+            ).eq(
                 "guest_session_id", str(session_id)
-            ).eq("consent_type", consent_type).eq("granted", True).limit(1).execute().data or []
+            ).eq("consent_type", consent_type).execute().data or []
         except APIError as exc:
             if not _is_missing_schema_error(exc):
                 raise
@@ -409,7 +412,11 @@ class SupabaseStore:
                 "Hayat consent migration is pending; treating consultation consent as unavailable."
             )
             return False
-        return bool(rows)
+        if not rows:
+            return False
+        # Latest recorded decision wins so withdrawals invalidate consent.
+        latest = max(rows, key=lambda r: str(r.get("recorded_at") or ""))
+        return latest.get("granted") is True
 
     @staticmethod
     def _facts(conversation_id: UUID, details: ConsultationDetails) -> dict[str, object]:
@@ -730,6 +737,156 @@ class SupabaseStore:
                 else None
             ),
         }
+
+
+    # ------------------------------------------------------------------
+    # Visitor medical documents — metadata in Postgres, bytes on disk.
+    # Service-role only; RLS denies anon/authenticated access entirely.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _visitor_doc_row(doc: "VisitorDocument") -> dict[str, Any]:
+        return {
+            "id": str(doc.id),
+            "session_id": str(doc.session_id),
+            "conversation_id": str(doc.conversation_id),
+            "filename": doc.filename,
+            "media_type": doc.media_type,
+            "size_bytes": doc.size_bytes,
+            "status": doc.status,
+            "extraction_method": doc.extraction_method,
+            "page_count": doc.page_count,
+            "confidence": doc.confidence,
+            "extracted_chars": doc.extracted_chars,
+            "extracted_text": doc.extracted_text,
+            "storage_path": doc.storage_path,
+            "consent_version": doc.consent_version,
+            "created_at": doc.created_at.isoformat(),
+            "processed_at": doc.processed_at.isoformat() if doc.processed_at else None,
+            "deleted_at": doc.deleted_at.isoformat() if doc.deleted_at else None,
+        }
+
+    @staticmethod
+    def _visitor_doc_from_row(row: dict[str, Any]) -> "VisitorDocument":
+        from .visitor_documents import VisitorDocument
+        return VisitorDocument(
+            id=UUID(str(row["id"])),
+            session_id=UUID(str(row["session_id"])),
+            conversation_id=UUID(str(row["conversation_id"])),
+            filename=row.get("filename") or "document",
+            media_type=row.get("media_type") or "application/octet-stream",
+            size_bytes=int(row.get("size_bytes") or 0),
+            status=row.get("status") or "uploaded",
+            extraction_method=row.get("extraction_method"),
+            page_count=row.get("page_count"),
+            confidence=row.get("confidence"),
+            extracted_chars=int(row.get("extracted_chars") or 0),
+            extracted_text=row.get("extracted_text"),
+            storage_path=row.get("storage_path"),
+            consent_version=row.get("consent_version"),
+            created_at=datetime.fromisoformat(str(row["created_at"]).replace("Z", "+00:00")),
+            processed_at=(
+                datetime.fromisoformat(str(row["processed_at"]).replace("Z", "+00:00"))
+                if row.get("processed_at") else None
+            ),
+            deleted_at=(
+                datetime.fromisoformat(str(row["deleted_at"]).replace("Z", "+00:00"))
+                if row.get("deleted_at") else None
+            ),
+        )
+
+    def save_visitor_document(self, doc: "VisitorDocument") -> "VisitorDocument":
+        self._memory_visitor_documents[doc.id] = doc
+        try:
+            self.client.table("visitor_documents").upsert(
+                self._visitor_doc_row(doc)
+            ).execute()
+        except Exception as exc:
+            logger.warning("Failed to persist visitor document metadata: %s", exc)
+        return doc
+
+    def get_visitor_document(self, document_id: UUID | str) -> "VisitorDocument | None":
+        try:
+            did = _uuid(document_id)
+        except (ValueError, AttributeError):
+            return None
+        mem = self._memory_visitor_documents.get(did)
+        if mem is not None:
+            return mem
+        try:
+            res = self.client.table("visitor_documents").select("*").eq(
+                "id", str(did)
+            ).limit(1).execute()
+            if res.data:
+                doc = self._visitor_doc_from_row(res.data[0])
+                self._memory_visitor_documents[doc.id] = doc
+                return doc
+        except Exception:
+            pass
+        return None
+
+    def list_visitor_documents(
+        self,
+        session_id: UUID | str,
+        conversation_id: UUID | str | None = None,
+        include_deleted: bool = False,
+    ) -> list["VisitorDocument"]:
+        sid = _uuid(session_id)
+        cid = _uuid(conversation_id) if conversation_id else None
+        try:
+            query = (
+                self.client.table("visitor_documents")
+                .select("*")
+                .eq("session_id", str(sid))
+            )
+            if cid is not None:
+                query = query.eq("conversation_id", str(cid))
+            if not include_deleted:
+                query = query.neq("status", "deleted")
+            rows = query.order("created_at").execute().data or []
+            docs = [self._visitor_doc_from_row(r) for r in rows]
+            for d in docs:
+                self._memory_visitor_documents[d.id] = d
+            return docs
+        except Exception:
+            pass
+        return [
+            d for d in self._memory_visitor_documents.values()
+            if d.session_id == sid
+            and (cid is None or d.conversation_id == cid)
+            and (include_deleted or d.status != "deleted")
+        ]
+
+    def delete_visitor_document(self, document_id: UUID | str) -> "VisitorDocument | None":
+        doc = self.get_visitor_document(document_id)
+        if doc is None or doc.status == "deleted":
+            return None
+        doc.status = "deleted"
+        doc.deleted_at = datetime.now(UTC)
+        self._memory_visitor_documents[doc.id] = doc
+        try:
+            self.client.table("visitor_documents").update(
+                {"status": "deleted", "deleted_at": doc.deleted_at.isoformat()}
+            ).eq("id", str(doc.id)).execute()
+        except Exception as exc:
+            logger.warning("Failed to mark visitor document deleted: %s", exc)
+        return doc
+
+    def withdraw_visitor_document_consent(self, session_id: UUID | str) -> int:
+        sid = _uuid(session_id)
+        docs = self.list_visitor_documents(sid, include_deleted=False)
+        for doc in docs:
+            self.delete_visitor_document(doc.id)
+        try:
+            self.record_consent(sid, {
+                "consent_type": "visitor_document_processing",
+                "granted": False,
+                "consent_version": "visitor-docs-v1",
+                "withdrawn_at": datetime.now(UTC).isoformat(),
+            })
+        except Exception as exc:
+            logger.warning("Failed to record consent withdrawal: %s", exc)
+        return len(docs)
 
 
 def create_store(settings: Settings) -> MemoryStore | SupabaseStore:

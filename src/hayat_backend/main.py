@@ -62,7 +62,7 @@ from .schemas.programme import (
     SignatureProgrammeEnquiryUpdate,
     SignatureProgrammeRegistrationRequest,
 )
-from .guardrails import redact_message
+from .guardrails import POLICY_VERSION, redact_message
 from .schemas.chat import MAX_MESSAGE_CHARS, RedactRequest
 from .policy_engine import EF_SCRIPTS_EN, EF_SCRIPTS_AR
 from .programme_service import assign_reference_code, registration_reply
@@ -77,6 +77,17 @@ from .attachments import (
     validate_upload,
 )
 from .upload_limit import MULTIPART_OVERHEAD_BYTES, UploadSizeLimitMiddleware
+from .visitor_documents import (
+    DOCUMENT_CONSENT_TYPE,
+    DOCUMENT_CONSENT_VERSION,
+    STATUS_PROCESSED,
+    STATUS_UPLOADED,
+    VisitorDocument,
+    build_document_context,
+    classify_extraction,
+    extract_document_text,
+    validate_upload as validate_document_upload,
+)
 
 logger = logging.getLogger("hayat")
 
@@ -319,6 +330,23 @@ def create_app(
         """Clean text a visitor wrote outside the chat, such as a chat title, before it's saved."""
         return {"text": redact_message(payload.text)}
 
+    def _document_context(conversation) -> str | None:
+        """Extracted-text context from the visitor's own processed documents.
+
+        Returns None when uploads are disabled, consent is absent, or no
+        processed documents exist — so document content can never leak into
+        conversations that did not provide it.
+        """
+        if not settings.visitor_attachments_enabled:
+            return None
+        if not store.has_valid_consent(conversation.session_id, DOCUMENT_CONSENT_TYPE):
+            return None
+        docs = store.list_visitor_documents(
+            conversation.session_id, conversation.id
+        )
+        context = build_document_context(docs)
+        return context or None
+
     @app.post("/v1/chat", tags=["chat"])
     async def chat(
         payload: ChatRequest,
@@ -354,6 +382,7 @@ def create_app(
                 ),
                 # While the AI is off, shadow mode logs what it would have said.
                 shadow_ai=settings.medical_ai_shadow,
+                document_context=_document_context(conversation),
             )
         except Exception as exc:
             # UH-6 & EF-8: Integration or database failure during turn
@@ -1013,6 +1042,7 @@ def create_app(
                     or (x_visitor is None and settings.app_env in {"development", "test"})
                 ),
                 shadow_ai=settings.medical_ai_shadow,
+                document_context=_document_context(conversation),
             )
         except Exception as exc:
             # UH-6 & EF-8: same safe fallback as /v1/chat on store or integration failure.
@@ -1130,6 +1160,45 @@ def create_app(
             "uploaded_at": entry["uploaded_at"],
         }
 
+    # =========================================================================
+    # Visitor medical-document intelligence — same flag, separate routes
+    # (/documents). Consent-gated, extracted, isolated per session; the
+    # plain /attachments flow above is unchanged.
+    # =========================================================================
+
+    _DOC_MEDIA_TYPES = {
+        ".pdf": "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+    }
+
+    def _require_documents() -> None:
+        if not settings.visitor_attachments_enabled:
+            raise HTTPException(
+                status_code=403,
+                detail="Visitor document uploads are disabled pending compliance approval.",
+            )
+
+    def _owned_document(session_id: UUID, conversation_id: UUID, document_id: UUID):
+        doc = store.get_visitor_document(document_id)
+        if (
+            doc is None
+            or doc.status == "deleted"
+            or doc.session_id != session_id
+            or doc.conversation_id != conversation_id
+        ):
+            raise HTTPException(status_code=404, detail="Document not found.")
+        return doc
+
+    def _remove_document_file(doc) -> None:
+        if doc.storage_path:
+            try:
+                Path(doc.storage_path).unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Could not remove stored document file: %s", doc.id)
+
     @app.post("/v1/conversations/{conversation_id}/attachments", tags=["attachments"])
     async def upload_visitor_attachment(
         conversation_id: UUID,
@@ -1183,6 +1252,175 @@ def create_app(
             "reply": reply.content,
             "message_id": str(reply.id),
         }
+
+    # =========================================================================
+    # Visitor medical-document intelligence — consent-gated extraction and
+    # document-grounded chat. Separate from the plain /attachments flow:
+    # these routes require explicit consent, extract text (OCR fallback),
+    # and feed bounded context into ChatService as untrusted data.
+    # =========================================================================
+
+    @app.post("/v1/conversations/{conversation_id}/documents", tags=["documents"])
+    async def upload_visitor_document(
+        conversation_id: UUID,
+        file: "UploadFile" = File(...),
+        consent: str = Form(default=""),
+        x_session_id: UUID = Header(..., alias="X-Session-ID"),
+        x_session_token: str = Header(..., alias="X-Session-Token"),
+    ):
+        """Upload a visitor medical document (PDF/DOCX/PNG/JPG).
+
+        Requires explicit recorded consent (`consent=true`). Extraction
+        status is reported honestly — a failed extraction is never
+        described as reviewed.
+        """
+        _require_documents()
+        if consent.strip().lower() not in {"true", "1", "yes"}:
+            raise HTTPException(
+                status_code=400,
+                detail="Explicit consent is required before uploading medical documents.",
+            )
+        try:
+            store.authorize(x_session_id, x_session_token)
+            conversation = store.get_conversation(x_session_id, conversation_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
+        max_bytes = settings.max_upload_mb * 1024 * 1024
+        data = await file.read(max_bytes + 1)
+        filename = Path(file.filename or "document").name
+        ext = Path(filename).suffix.lower()
+        if len(data) > max_bytes:
+            raise HTTPException(status_code=413, detail="Attachment too large.")
+        problem = validate_document_upload(data, ext)
+        if problem == "unsupported_type":
+            raise HTTPException(status_code=415, detail="Unsupported file type. Use PDF, DOCX, PNG, JPG or JPEG.")
+        if problem == "empty_file":
+            raise HTTPException(status_code=400, detail="Empty file.")
+        if problem == "content_mismatch":
+            raise HTTPException(status_code=422, detail="File content does not match its extension.")
+        if problem == "unsafe_content":
+            raise HTTPException(status_code=422, detail="File rejected by safety scan.")
+
+        doc_id = uuid4()
+        target_dir = Path(settings.attachments_dir) / str(x_session_id)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"{doc_id.hex}{ext}"
+        target.write_bytes(data)
+
+        extracted, meta = extract_document_text(data, ext)
+        status = classify_extraction(extracted, meta)
+        now = datetime.now(UTC)
+        doc = VisitorDocument(
+            id=doc_id,
+            session_id=x_session_id,
+            conversation_id=conversation_id,
+            filename=filename,
+            media_type=_DOC_MEDIA_TYPES.get(ext, "application/octet-stream"),
+            size_bytes=len(data),
+            status=status,
+            extraction_method=meta.get("method"),
+            page_count=meta.get("pages"),
+            confidence=meta.get("confidence"),
+            extracted_chars=len(extracted.strip()),
+            extracted_text=extracted if status == STATUS_PROCESSED else None,
+            storage_path=str(target),
+            consent_version=DOCUMENT_CONSENT_VERSION,
+            created_at=now,
+            processed_at=now if status != STATUS_UPLOADED else None,
+        )
+        store.save_visitor_document(doc)
+        store.record_consent(x_session_id, {
+            "consent_type": DOCUMENT_CONSENT_TYPE,
+            "granted": True,
+            "consent_version": DOCUMENT_CONSENT_VERSION,
+            "policy_version": POLICY_VERSION,
+            "document_id": str(doc_id),
+            "recorded_at": now.isoformat(),
+        })
+        logger.info(
+            "Visitor document uploaded [session=%s doc=%s status=%s bytes=%d]",
+            x_session_id, doc_id, status, len(data),
+        )
+        return doc.public_dict()
+
+    @app.get("/v1/conversations/{conversation_id}/documents", tags=["documents"])
+    async def list_visitor_documents(
+        conversation_id: UUID,
+        x_session_id: UUID = Header(..., alias="X-Session-ID"),
+        x_session_token: str = Header(..., alias="X-Session-Token"),
+    ):
+        _require_documents()
+        try:
+            store.authorize(x_session_id, x_session_token)
+            store.get_conversation(x_session_id, conversation_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
+        docs = store.list_visitor_documents(x_session_id, conversation_id)
+        return {"documents": [d.public_dict() for d in docs]}
+
+    @app.get("/v1/conversations/{conversation_id}/documents/{document_id}", tags=["documents"])
+    async def get_visitor_document(
+        conversation_id: UUID,
+        document_id: UUID,
+        include_text: bool = False,
+        x_session_id: UUID = Header(..., alias="X-Session-ID"),
+        x_session_token: str = Header(..., alias="X-Session-Token"),
+    ):
+        _require_documents()
+        try:
+            store.authorize(x_session_id, x_session_token)
+            store.get_conversation(x_session_id, conversation_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
+        doc = _owned_document(x_session_id, conversation_id, document_id)
+        return doc.public_dict(include_text=include_text and doc.status == STATUS_PROCESSED)
+
+    @app.delete("/v1/conversations/{conversation_id}/documents/{document_id}", tags=["documents"])
+    async def delete_visitor_document(
+        conversation_id: UUID,
+        document_id: UUID,
+        x_session_id: UUID = Header(..., alias="X-Session-ID"),
+        x_session_token: str = Header(..., alias="X-Session-Token"),
+    ):
+        _require_documents()
+        try:
+            store.authorize(x_session_id, x_session_token)
+            store.get_conversation(x_session_id, conversation_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
+        doc = _owned_document(x_session_id, conversation_id, document_id)
+        _remove_document_file(doc)
+        store.delete_visitor_document(doc.id)
+        logger.info(
+            "Visitor document deleted [session=%s doc=%s]", x_session_id, doc.id,
+        )
+        return {"document_id": str(doc.id), "status": "deleted"}
+
+    @app.post("/v1/conversations/{conversation_id}/documents/consent/withdraw", tags=["documents"])
+    async def withdraw_visitor_document_consent(
+        conversation_id: UUID,
+        x_session_id: UUID = Header(..., alias="X-Session-ID"),
+        x_session_token: str = Header(..., alias="X-Session-Token"),
+    ):
+        """Withdraw document-processing consent: deletes every document the
+        session uploaded and records the withdrawal. Fail-closed — uploads
+        are blocked afterwards until consent is given again."""
+        _require_documents()
+        try:
+            store.authorize(x_session_id, x_session_token)
+            store.get_conversation(x_session_id, conversation_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
+        docs = store.list_visitor_documents(x_session_id, include_deleted=False)
+        for doc in docs:
+            _remove_document_file(doc)
+        removed = store.withdraw_visitor_document_consent(x_session_id)
+        logger.info(
+            "Visitor document consent withdrawn [session=%s removed=%d]",
+            x_session_id, removed,
+        )
+        return {"status": "withdrawn", "documents_removed": removed}
+
 
     @app.get("/v1/staff/conversations/{conversation_id}/attachments", tags=["attachments"])
     async def list_conversation_attachments(conversation_id: UUID):

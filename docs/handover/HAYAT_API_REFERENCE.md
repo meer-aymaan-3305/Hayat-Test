@@ -67,6 +67,25 @@ headers `X-Session-ID`, `X-Session-Token`, optional `X-Reply-Language: en|ar`)
   filename*=UTF-8''<name>`, `X-Content-Type-Options: nosniff`.
 - 404 unknown or malformed id, 403 disabled.
 
+## Visitor documents — medical-document intelligence (same flag; `/documents` routes)
+Distinct from the plain `/attachments` flow above: these routes require
+explicit consent, extract text (OCR fallback for scans) and feed bounded
+context into chat as untrusted data. All return **403 while the flag is
+off** (default). Upload additionally requires form field `consent=true`.
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/v1/conversations/{id}/documents` | multipart `file` (PDF/DOCX/PNG/JPG/JPEG ≤ `MAX_UPLOAD_MB`) + `consent`. Validates magic bytes, extracts text, returns `{document_id, status, page_count, confidence, extracted_chars}` |
+| GET | `/v1/conversations/{id}/documents` | list own document metadata |
+| GET | `/v1/conversations/{id}/documents/{doc_id}` | metadata; `?include_text=true` adds extracted text (processed docs only) |
+| DELETE | `/v1/conversations/{id}/documents/{doc_id}` | deletes file + metadata |
+| POST | `/v1/conversations/{id}/documents/consent/withdraw` | deletes all session documents, records withdrawal |
+
+Statuses: `processed`, `needs_clearer_upload`, `failed`, `deleted`.
+Cross-visitor access → 404. Document text reaches the chat model only as
+labelled untrusted data; never indexed as company knowledge, never sent
+to CRM. See `HAYAT_VISITOR_DOCUMENTS.md`.
+
 ## Consultations (approval-gated)
 `POST /v1/consultations/otp/start`, `POST /v1/consultations` — require
 Firebase creds + Addendum 1.1; currently 503 by design.
