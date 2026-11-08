@@ -15,6 +15,7 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from .config import SettingsError, get_settings
 from .chat_service import ChatService, greeting
@@ -60,15 +61,36 @@ from .schemas.programme import (
     SignatureProgrammeRegistrationRequest,
 )
 from .guardrails import redact_message
-from .schemas.chat import RedactRequest
+from .schemas.chat import MAX_MESSAGE_CHARS, RedactRequest
 from .policy_engine import EF_SCRIPTS_EN, EF_SCRIPTS_AR
 from .programme_service import assign_reference_code, registration_reply
 from .service_auth import DOCS_PATHS, OPEN_PATHS, is_service_token
 from .audit_logging import global_audit_store
-from .knowledge import KnowledgeStore, DocumentIngestionError
-from .speech import SpeechError, create_stt, create_tts
+from .knowledge import (
+    DocumentIngestionError, DocumentNotFoundError, KnowledgeStore, KnowledgeStoreError,
+)
+from .speech import SpeechError, SpeechInputTooLongError, create_stt, create_tts
+from .upload_limit import MULTIPART_OVERHEAD_BYTES, UploadSizeLimitMiddleware
 
 logger = logging.getLogger("hayat")
+
+
+_AUDIO_EXTENSIONS = {
+    ".flac", ".m4a", ".mp3", ".mp4", ".mpeg", ".mpga", ".oga", ".ogg", ".wav", ".webm",
+}
+_AUDIO_TYPE_EXTENSIONS = {
+    "audio/webm": ".webm", "video/webm": ".webm", "audio/ogg": ".ogg", "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3", "audio/mp4": ".m4a", "video/mp4": ".mp4", "audio/x-m4a": ".m4a",
+    "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/wave": ".wav", "audio/flac": ".flac",
+}
+
+
+def _audio_upload_name(filename: str | None, content_type: str) -> str:
+    """A fixed name for the speech provider; the visitor's own filename is never forwarded."""
+    ext = Path(filename or "").suffix.lower()
+    if ext not in _AUDIO_EXTENSIONS:
+        ext = _AUDIO_TYPE_EXTENSIONS.get(content_type.split(";")[0].strip().lower(), ".webm")
+    return f"audio{ext}"
 
 
 class IntakeValidationRequest(BaseModel):
@@ -118,8 +140,15 @@ def create_app(
     stt = create_stt(settings)
     tts = create_tts(settings)
     # Index previously uploaded approved-knowledge documents at startup.
-    if hasattr(chat_service.retriever, "replace_uploaded"):
-        chat_service.retriever.replace_uploaded(knowledge_store.indexed_chunks())
+    if hasattr(chat_service.retriever, "replace_uploaded") and knowledge_store.available:
+        try:
+            chat_service.retriever.replace_uploaded(knowledge_store.indexed_chunks())
+        except KnowledgeStoreError:
+            logger.error(
+                "Uploaded knowledge documents were NOT loaded: the knowledge index is "
+                "unreadable. Fix or restore %s; uploads stay blocked until then.",
+                knowledge_store.index_path,
+            )
     if otp_provider is not None:
         otp = otp_provider
     elif settings.firebase_api_key:
@@ -132,6 +161,12 @@ def create_app(
             firebase_verifier = FirebaseAdminTokenVerifier(settings)
         except OTPProviderError:
             logger.exception("Firebase Admin verification is unavailable")
+    # Innermost, so it runs after service authentication and before any body parsing.
+    app.add_middleware(
+        UploadSizeLimitMiddleware,
+        max_body_bytes=settings.max_upload_mb * 1024 * 1024 + MULTIPART_OVERHEAD_BYTES,
+        prefixes=("/v1/knowledge/", "/v1/voice/chat"),
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.allowed_origins,
@@ -682,13 +717,14 @@ def create_app(
         """Create or update an enquiry preference record for Signature Programmes."""
         try:
             store.authorize(x_session_id, x_session_token)
+            store.get_conversation(x_session_id, payload.conversation_id)
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail="Session access denied.") from exc
+            raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
 
         updates = payload.model_dump(exclude={"conversation_id", "session_id"}, exclude_unset=True)
         enquiry = store.upsert_programme_enquiry(
             conversation_id=payload.conversation_id,
-            session_id=payload.session_id,
+            session_id=x_session_id,
             updates=updates,
         )
         return enquiry
@@ -702,8 +738,9 @@ def create_app(
         """Retrieve the Signature Programme enquiry associated with a conversation."""
         try:
             store.authorize(x_session_id, x_session_token)
+            store.get_conversation(x_session_id, conversation_id)
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail="Session access denied.") from exc
+            raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
 
         enquiry = store.get_programme_enquiry_for_conversation(conversation_id)
         if not enquiry:
@@ -726,6 +763,10 @@ def create_app(
         enquiry = store.get_programme_enquiry(enquiry_id)
         if not enquiry or enquiry.session_id != x_session_id:
             raise HTTPException(status_code=404, detail="Programme enquiry not found.")
+        try:
+            store.get_conversation(x_session_id, enquiry.conversation_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=404, detail="Programme enquiry not found.") from exc
 
         # Contact details are only kept once Policy Addendum 1.1 is approved.
         if settings.policy_addendum_1_1_approved:
@@ -753,6 +794,13 @@ def create_app(
     # Approved company-knowledge document ingestion (BFF/service-token only)
     # =========================================================================
 
+    def knowledge_unavailable() -> HTTPException:
+        return HTTPException(status_code=503, detail="Knowledge uploads are unavailable.")
+
+    async def resync_retriever() -> None:
+        chunks = await run_in_threadpool(knowledge_store.indexed_chunks)
+        chat_service.retriever.replace_uploaded(chunks)
+
     @app.post("/v1/knowledge/documents", tags=["knowledge"])
     async def upload_knowledge_document(
         file: "UploadFile" = File(...),
@@ -766,16 +814,20 @@ def create_app(
         max_bytes = settings.max_upload_mb * 1024 * 1024
         data = await file.read(max_bytes + 1)
         try:
-            record, chunks = knowledge_store.ingest(
+            # Parsing is blocking and CPU-heavy, so it runs off the event loop.
+            record, _chunks = await run_in_threadpool(
+                knowledge_store.ingest,
                 file.filename or "document",
                 data,
                 max_bytes=max_bytes,
                 title=title,
             )
+            if record.status == "indexed":
+                await resync_retriever()
         except DocumentIngestionError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if record.status == "indexed":
-            chat_service.retriever.replace_uploaded(knowledge_store.indexed_chunks())
+        except KnowledgeStoreError as exc:
+            raise knowledge_unavailable() from exc
         return {
             "document_id": record.document_id,
             "filename": record.filename,
@@ -788,6 +840,10 @@ def create_app(
 
     @app.get("/v1/knowledge/documents", tags=["knowledge"])
     async def list_knowledge_documents():
+        try:
+            documents = await run_in_threadpool(knowledge_store.list_documents)
+        except KnowledgeStoreError as exc:
+            raise knowledge_unavailable() from exc
         return [
             {
                 "document_id": d.document_id,
@@ -799,7 +855,7 @@ def create_app(
                 "error": d.error,
                 "uploaded_at": d.uploaded_at,
             }
-            for d in knowledge_store.list_documents()
+            for d in documents
         ]
 
     @app.put("/v1/knowledge/documents/{document_id}", tags=["knowledge"])
@@ -817,14 +873,18 @@ def create_app(
         max_bytes = settings.max_upload_mb * 1024 * 1024
         data = await file.read(max_bytes + 1)
         try:
-            record, _chunks = knowledge_store.update(
+            record, _chunks = await run_in_threadpool(
+                knowledge_store.update,
                 document_id, file.filename or "document", data,
                 max_bytes=max_bytes, title=title,
             )
+            await resync_retriever()
+        except DocumentNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except DocumentIngestionError as exc:
-            status = 404 if "not found" in str(exc).lower() else 422
-            raise HTTPException(status_code=status, detail=str(exc)) from exc
-        chat_service.retriever.replace_uploaded(knowledge_store.indexed_chunks())
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except KnowledgeStoreError as exc:
+            raise knowledge_unavailable() from exc
         return {
             "document_id": record.document_id,
             "filename": record.filename,
@@ -843,9 +903,14 @@ def create_app(
         files, then re-syncs the retriever so the content is no longer
         retrievable. Visitor attachments are unaffected (separate store).
         """
-        if not knowledge_store.remove(document_id):
+        try:
+            removed = await run_in_threadpool(knowledge_store.remove, document_id)
+            if removed:
+                await resync_retriever()
+        except KnowledgeStoreError as exc:
+            raise knowledge_unavailable() from exc
+        if not removed:
             raise HTTPException(status_code=404, detail="Document not found.")
-        chat_service.retriever.replace_uploaded(knowledge_store.indexed_chunks())
         return {"document_id": document_id, "status": "deleted"}
 
     # =========================================================================
@@ -856,6 +921,7 @@ def create_app(
     async def voice_chat(
         file: "UploadFile" = File(...),
         conversation_id: UUID = Form(...),
+        client_message_id: str | None = Form(default=None, min_length=1, max_length=100),
         x_session_id: UUID = Header(..., alias="X-Session-ID"),
         x_session_token: str = Header(..., alias="X-Session-Token"),
         x_visitor: Literal["guest", "customer"] | None = Header(default=None, alias="X-Visitor"),
@@ -882,22 +948,51 @@ def create_app(
             raise HTTPException(status_code=415, detail="Unsupported audio format.")
         try:
             transcript, detected = await stt.transcribe(
-                audio, file.filename or "audio", file.content_type or "application/octet-stream"
+                audio, _audio_upload_name(file.filename, content_type), content_type
             )
         except SpeechError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        result = await chat_service.respond(
-            conversation,
-            transcript,
-            visitor=x_visitor,
-            contactable=x_contact_consent and settings.policy_addendum_1_1_approved,
-            reply_language=x_reply_language,
-            use_ai=(
-                settings.medical_ai_replies
-                or (x_visitor is None and settings.app_env in {"development", "test"})
-            ),
-            shadow_ai=settings.medical_ai_shadow,
-        )
+        if len(transcript) > MAX_MESSAGE_CHARS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"The recording is too long (limit {MAX_MESSAGE_CHARS} characters of speech). Please send a shorter message.",
+            )
+        try:
+            result = await chat_service.respond(
+                conversation,
+                transcript,
+                client_message_id,
+                x_visitor,
+                contactable=x_contact_consent and settings.policy_addendum_1_1_approved,
+                reply_language=x_reply_language,
+                use_ai=(
+                    settings.medical_ai_replies
+                    or (x_visitor is None and settings.app_env in {"development", "test"})
+                ),
+                shadow_ai=settings.medical_ai_shadow,
+            )
+        except Exception as exc:
+            # UH-6 & EF-8: same safe fallback as /v1/chat on store or integration failure.
+            logger.exception("Integration or database error during voice turn: %s", exc)
+            language = detect_language(transcript)
+            scripts = EF_SCRIPTS_AR if language == "ar" else EF_SCRIPTS_EN
+            global_audit_store.log_fallback(
+                session_id=conversation.session_id,
+                conversation_id=conversation.id,
+                rule_id="EF-8",
+                trigger_type=f"database_integration_error:{type(exc).__name__}",
+            )
+            return {
+                "conversation_id": conversation.id,
+                "transcript": transcript,
+                "detected_language": detected,
+                "reply": scripts["EF-8"],
+                "language": language,
+                "escalation_required": True,
+                "suggested_actions": [],
+                "conversation_state": "escalated",
+                "message_id": str(uuid4()),
+            }
         payload = {
             "conversation_id": conversation.id,
             "transcript": transcript,
@@ -941,6 +1036,8 @@ def create_app(
             raise HTTPException(status_code=404, detail="Assistant message not found.")
         try:
             audio, media_type = await tts.synthesize(message.content, message.language or "en")
+        except SpeechInputTooLongError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except SpeechError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         from fastapi.responses import Response

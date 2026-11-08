@@ -99,7 +99,9 @@ class SignatureProgrammeEnquiry(BaseModel):
 
     enquiry_id: UUID = Field(default_factory=uuid4)
     conversation_id: UUID
-    session_id: UUID
+    # Accepted for older callers but ignored: the session always comes from the
+    # authenticated X-Session-ID header.
+    session_id: UUID | None = None
     current_stage: ProgrammeStage = ProgrammeStage.DISCOVERY
     reference_code: str | None = None
     interested_programmes: list[str] = Field(default_factory=list)

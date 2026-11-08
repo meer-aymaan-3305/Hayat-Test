@@ -7,6 +7,9 @@ from .common import ContractModel, new_id
 from .intake import ConsultationProgress
 
 
+MAX_MESSAGE_CHARS = 8_000
+
+
 class MessageRole(StrEnum):
     USER = "user"
     ASSISTANT = "assistant"
@@ -22,7 +25,7 @@ class ChatMessage(ContractModel):
 
 class ChatRequest(ContractModel):
     conversation_id: UUID
-    message: str = Field(min_length=1, max_length=8_000)
+    message: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
     client_message_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 

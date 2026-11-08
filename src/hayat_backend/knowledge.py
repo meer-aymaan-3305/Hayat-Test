@@ -11,8 +11,12 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
+import os
 import re
+import tempfile
 import threading
+import zipfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,18 +25,34 @@ from uuid import uuid4
 
 from .rag import KnowledgeChunk, SourceReference
 
+logger = logging.getLogger("hayat.knowledge")
+
+# File type is decided by extension (browsers report inconsistent content types for
+# DOCX/TXT), and the parser then rejects anything that is not really that format.
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
-ALLOWED_CONTENT_TYPES = {
-    "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "text/plain",
-}
 _CHUNK_SIZE = 1200
 _CHUNK_OVERLAP = 150
+
+# Limits that stop a small upload from expanding into an event-loop or memory bomb.
+_MAX_PDF_PAGES = 300
+_MAX_TEXT_CHARS = 5_000_000
+_MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
+_MAX_DOCX_ENTRIES = 2_000
+_MAX_DOCX_RATIO = 100
+_RATIO_CHECK_FLOOR_BYTES = 1024 * 1024
+_UNREADABLE_FILE = "Could not read this file."
 
 
 class DocumentIngestionError(RuntimeError):
     pass
+
+
+class DocumentNotFoundError(DocumentIngestionError):
+    pass
+
+
+class KnowledgeStoreError(RuntimeError):
+    """The knowledge store is unusable (unwritable folder or damaged index)."""
 
 
 @dataclass
@@ -48,24 +68,64 @@ class DocumentRecord:
     sha256: str | None = None
 
 
+def _check_docx_archive(data: bytes) -> None:
+    """Reject zip bombs before python-docx unpacks the archive.
+
+    Declared sizes are trustworthy upper bounds: zipfile never reads past them."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            entries = archive.infolist()
+    except zipfile.BadZipFile as exc:
+        raise DocumentIngestionError(_UNREADABLE_FILE) from exc
+    total = sum(entry.file_size for entry in entries)
+    if (
+        len(entries) > _MAX_DOCX_ENTRIES
+        or total > _MAX_DOCX_UNCOMPRESSED_BYTES
+        or (total > _RATIO_CHECK_FLOOR_BYTES and total / max(len(data), 1) > _MAX_DOCX_RATIO)
+    ):
+        raise DocumentIngestionError("This document is too large or too compressed to process.")
+
+
 def _extract_text(filename: str, data: bytes) -> str:
+    """Blocking and CPU-heavy: callers on the event loop must run it in a thread."""
     ext = Path(filename).suffix.lower()
     try:
         if ext == ".txt":
-            return data.decode("utf-8", errors="replace")
-        if ext == ".pdf":
+            text = data.decode("utf-8", errors="replace")
+        elif ext == ".pdf":
             from pypdf import PdfReader
 
             reader = PdfReader(io.BytesIO(data))
-            return "\n".join((page.extract_text() or "") for page in reader.pages)
-        if ext == ".docx":
+            if len(reader.pages) > _MAX_PDF_PAGES:
+                raise DocumentIngestionError(
+                    f"PDF has too many pages (limit {_MAX_PDF_PAGES})."
+                )
+            parts: list[str] = []
+            total = 0
+            for page in reader.pages:
+                page_text = page.extract_text() or ""
+                total += len(page_text)
+                if total > _MAX_TEXT_CHARS:
+                    raise DocumentIngestionError("Document contains too much text.")
+                parts.append(page_text)
+            text = "\n".join(parts)
+        elif ext == ".docx":
             import docx
 
+            _check_docx_archive(data)
             doc = docx.Document(io.BytesIO(data))
-            return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        else:
+            raise DocumentIngestionError(f"Unsupported file type '{ext}'.")
+    except DocumentIngestionError:
+        raise
     except Exception as exc:
-        raise DocumentIngestionError(f"Could not extract text: {exc}") from exc
-    raise DocumentIngestionError(f"Unsupported file type '{ext}'.")
+        # Parser messages can echo file content or internals: log, never return.
+        logger.warning("Could not extract text from %s upload: %s", ext, exc)
+        raise DocumentIngestionError(_UNREADABLE_FILE) from exc
+    if len(text) > _MAX_TEXT_CHARS:
+        raise DocumentIngestionError("Document contains too much text.")
+    return text
 
 
 def _chunk_text(text: str) -> list[str]:
@@ -90,20 +150,58 @@ class KnowledgeStore:
         self.root = Path(root)
         self.docs_dir = self.root / "documents"
         self.index_path = self.root / "index.json"
-        self.docs_dir.mkdir(parents=True, exist_ok=True)
         # Index read-modify-write must be atomic across concurrent uploads.
         self._lock = threading.Lock()
+        # An unwritable folder must not stop Hayat from starting: uploads are
+        # switched off and every knowledge call reports the store as unavailable.
+        self.available = True
+        try:
+            self.docs_dir.mkdir(parents=True, exist_ok=True)
+            if not os.access(self.docs_dir, os.W_OK | os.X_OK):
+                raise PermissionError(f"{self.docs_dir} is not writable")
+        except OSError as exc:
+            self.available = False
+            logger.error(
+                "Knowledge folder %s is unusable, knowledge uploads are disabled: %s",
+                self.root, exc,
+            )
 
     def _load_index(self) -> dict[str, Any]:
-        if self.index_path.exists():
-            try:
-                return json.loads(self.index_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                pass
-        return {"documents": {}}
+        if not self.available:
+            raise KnowledgeStoreError("Knowledge store is unavailable.")
+        if not self.index_path.exists():
+            return {"documents": {}}  # clean first run
+        try:
+            return json.loads(self.index_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+            # Never fall back to an empty index: the next save would overwrite
+            # every approved document's record.
+            logger.error("Knowledge index %s is unreadable: %s", self.index_path, exc)
+            raise KnowledgeStoreError("Knowledge index is unreadable.") from exc
 
     def _save_index(self, index: dict[str, Any]) -> None:
-        self.index_path.write_text(json.dumps(index, indent=2, ensure_ascii=False), encoding="utf-8")
+        """Write atomically: temp file in the same folder, fsync, then rename."""
+        payload = json.dumps(index, indent=2, ensure_ascii=False)
+        fd, tmp_name = tempfile.mkstemp(dir=self.root, prefix="index.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_name, self.index_path)
+        except BaseException:
+            Path(tmp_name).unlink(missing_ok=True)
+            raise
+        try:
+            dir_fd = os.open(self.root, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(dir_fd)
+        except OSError:
+            pass
+        finally:
+            os.close(dir_fd)
 
     def list_documents(self) -> list[DocumentRecord]:
         index = self._load_index()
@@ -238,7 +336,7 @@ class KnowledgeStore:
         index = self._load_index()
         meta = index.get("documents", {}).get(document_id)
         if meta is None:
-            raise DocumentIngestionError("Document not found.")
+            raise DocumentNotFoundError("Document not found.")
 
         # Extract first — a failure here leaves the active version untouched.
         try:
