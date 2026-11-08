@@ -35,7 +35,7 @@ _MEDICAL_HINT_RE = re.compile(
     r"\b(medical|medicine|treatment|procedure|surgery|hospital|doctor|specialist|"
     r"clinic|dental|cardiology|cardiologist|orthop\w+|dermatolog\w+|oncolog\w+|"
     r"medical travel|travell?ing for|travel for)\b|"
-    r"سفر\s+طبي|علاج|جراحة|مستشفى|طبيب|أسنان|قسطرة|باطنة|تجميل",
+    r"سفر\s+طبي|عملية\s+طبية|سفر|علاج|جراحة|مستشفى|طبيب|أسنان|قسطرة|باطنية|تجميل",
     re.IGNORECASE,
 )
 _WELLNESS_HINT_RE = re.compile(
@@ -53,7 +53,14 @@ _FOLLOWUP_CONTEXT_RE = re.compile(
 _AMBIGUOUS_HINT_RE = re.compile(
     r"\b(both|either|not sure|unsure|undecided|don't know|do not know|"
     r"help me decide|not certain)\b|"
-    r"غير\s+متأكد|لست\s+متأكد|كلاهما|أي\s+منهما|لا\s+أعرف|لا\s+ادري|ساعدني\s+أقرر",
+    r"غير\s+متأكد|لست\s+متأكد|كلاهما|أي\s+منهما|لا\s+أعرف|لا\s+ادري|ساعدني\s+أقرر|"
+    r"(طبية|علاج|جراحة).{0,40}(عافية|لياقة)|(عافية|لياقة).{0,40}(طبية|علاج|جراحة)",
+    re.IGNORECASE,
+)
+_INTENT_DECLARATION_RE = re.compile(
+    r"\b(interested|interest|looking for|want|need|exploring|seeking|would like|"
+    r"i'?m interested|i am interested)\b|"
+    r"أهتم|مهتم|أبحث|أريد|أستكشف|أسعى|أرغب|أحتاج",
     re.IGNORECASE,
 )
 
@@ -82,6 +89,8 @@ class QuestionPlanner:
         category = self._category(conversation)
         consultation_requested = bool(_CONSULTATION_INTENT.search(text))
         question_requested = bool(_QUESTION_INTENT.search(text))
+        _msgs = getattr(conversation, "messages", [])
+        user_turns = sum(1 for m in _msgs if m.role == "user")
 
         # Check if all clinical/wellness details are present
         missing_funnel = self._first_missing(conversation, category, include_contact=False)
@@ -174,11 +183,19 @@ class QuestionPlanner:
                     question_text=self._question_for(field, category),
                     target_field=field,
                 )
-        elif self._has_ambiguous_category(text) or _AMBIGUOUS_HINT_RE.search(text):
+        elif (
+            self._has_ambiguous_category(text)
+            or _AMBIGUOUS_HINT_RE.search(text)
+            or (
+                self._journey_hint(text)
+                and user_turns <= 1
+                and not _FOLLOWUP_CONTEXT_RE.search(text)
+                and (_INTENT_DECLARATION_RE.search(text) or not question_requested)
+            )
+        ):
             # Journey hints apply to first-turn intent declarations only;
-            # follow-up/contextual phrasing keeps the generic clarify.
-            msgs = getattr(conversation, "messages", [])
-            user_turns = sum(1 for m in msgs if m.role == "user")
+            # follow-up/contextual phrasing and pure informational questions
+            # keep the generic clarify/answer behaviour.
             hint = (
                 self._journey_hint(text)
                 if user_turns <= 1 and not _FOLLOWUP_CONTEXT_RE.search(text)
