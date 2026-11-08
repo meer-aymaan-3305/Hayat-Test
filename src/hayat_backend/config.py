@@ -44,6 +44,7 @@ class Settings(BaseModel):
     knowledge_dir: str = "data/knowledge"
     attachments_dir: str = "data/attachments"
     visitor_attachments_enabled: bool = False
+    attachment_retention_days: int = Field(default=90, ge=0)
     max_upload_mb: int = Field(default=10, ge=1, le=50)
     groq_stt_model: str = "whisper-large-v3"
     groq_stt_language: str | None = None
@@ -123,6 +124,7 @@ def load_settings() -> Settings:
             knowledge_dir=values.get("KNOWLEDGE_DIR", "data/knowledge"),
             attachments_dir=values.get("ATTACHMENTS_DIR", "data/attachments"),
             visitor_attachments_enabled=values.get("VISITOR_ATTACHMENTS_ENABLED", "false").lower() in ("true", "1", "yes"),
+            attachment_retention_days=values.get("ATTACHMENT_RETENTION_DAYS", 90),
             max_upload_mb=values.get("MAX_UPLOAD_MB", 10),
             groq_stt_model=values.get("GROQ_STT_MODEL", "whisper-large-v3"),
             groq_stt_language=values.get("GROQ_STT_LANGUAGE") or None,

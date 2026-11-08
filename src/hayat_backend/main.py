@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Literal
 from contextlib import asynccontextmanager
@@ -10,10 +11,11 @@ from time import perf_counter
 from uuid import UUID, uuid4
 
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -70,6 +72,10 @@ from .knowledge import (
     DocumentIngestionError, DocumentNotFoundError, KnowledgeStore, KnowledgeStoreError,
 )
 from .speech import SpeechError, SpeechInputTooLongError, create_stt, create_tts
+from .attachments import (
+    ACKNOWLEDGEMENTS, CONTENT_TYPES, AttachmentError, AttachmentStore, AttachmentStoreError,
+    validate_upload,
+)
 from .upload_limit import MULTIPART_OVERHEAD_BYTES, UploadSizeLimitMiddleware
 
 logger = logging.getLogger("hayat")
@@ -117,7 +123,27 @@ async def lifespan(app: FastAPI):
             settings.app_env,
             ", ".join(settings.missing_integrations),
         )
-    yield
+    attachments: AttachmentStore = app.state.attachments
+    await _purge_attachments(attachments)
+    purge_task = asyncio.create_task(_purge_attachments_daily(attachments))
+    try:
+        yield
+    finally:
+        purge_task.cancel()
+
+
+async def _purge_attachments(attachments: AttachmentStore) -> None:
+    try:
+        removed = await run_in_threadpool(attachments.purge_expired)
+        logger.info("Attachment retention purge removed %d file(s).", removed)
+    except Exception:
+        logger.exception("Attachment retention purge failed.")
+
+
+async def _purge_attachments_daily(attachments: AttachmentStore) -> None:
+    while True:
+        await asyncio.sleep(24 * 60 * 60)
+        await _purge_attachments(attachments)
 
 
 def create_app(
@@ -137,6 +163,8 @@ def create_app(
         chat_service = ChatService(store, create_chat_model(settings))
     coordinator_service = CoordinatorHandoffService(store, settings=settings)
     knowledge_store = KnowledgeStore(settings.knowledge_dir)
+    attachment_store = AttachmentStore(settings.attachments_dir, settings.attachment_retention_days)
+    app.state.attachments = attachment_store
     stt = create_stt(settings)
     tts = create_tts(settings)
     # Index previously uploaded approved-knowledge documents at startup.
@@ -166,6 +194,7 @@ def create_app(
         UploadSizeLimitMiddleware,
         max_body_bytes=settings.max_upload_mb * 1024 * 1024 + MULTIPART_OVERHEAD_BYTES,
         prefixes=("/v1/knowledge/", "/v1/voice/chat"),
+        suffixes=("/attachments",),
     )
     app.add_middleware(
         CORSMiddleware,
@@ -1045,10 +1074,26 @@ def create_app(
         return Response(content=audio, media_type=media_type)
 
     # =========================================================================
-    # Visitor attachments — DISABLED until compliance approval (Addendum 1.1).
-    # Architecture is in place; the endpoint fails closed while
-    # VISITOR_ATTACHMENTS_ENABLED=false. Clinical documents are never accepted.
+    # Visitor attachments — off unless VISITOR_ATTACHMENTS_ENABLED=true.
+    # Files are stored privately per conversation and never read, parsed,
+    # indexed as knowledge or sent to the CRM or an AI provider.
     # =========================================================================
+
+    def require_attachments_enabled() -> None:
+        if not settings.visitor_attachments_enabled:
+            raise HTTPException(status_code=403, detail="Visitor document uploads are disabled.")
+
+    def attachments_unavailable() -> HTTPException:
+        return HTTPException(status_code=503, detail="Attachments are unavailable.")
+
+    def public_attachment(entry: dict) -> dict:
+        return {
+            "attachment_id": entry["id"],
+            "filename": entry["filename"],
+            "extension": entry["extension"],
+            "size": entry["size"],
+            "uploaded_at": entry["uploaded_at"],
+        }
 
     @app.post("/v1/conversations/{conversation_id}/attachments", tags=["attachments"])
     async def upload_visitor_attachment(
@@ -1056,12 +1101,9 @@ def create_app(
         file: "UploadFile" = File(...),
         x_session_id: UUID = Header(..., alias="X-Session-ID"),
         x_session_token: str = Header(..., alias="X-Session-Token"),
+        x_reply_language: Literal["en", "ar"] | None = Header(default=None, alias="X-Reply-Language"),
     ):
-        if not settings.visitor_attachments_enabled:
-            raise HTTPException(
-                status_code=403,
-                detail="Visitor document uploads are disabled pending compliance approval.",
-            )
+        require_attachments_enabled()
         try:
             store.authorize(x_session_id, x_session_token)
             conversation = store.get_conversation(x_session_id, conversation_id)
@@ -1069,19 +1111,74 @@ def create_app(
             raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
         max_bytes = settings.max_upload_mb * 1024 * 1024
         data = await file.read(max_bytes + 1)
-        ext = Path(file.filename or "").suffix.lower()
-        if ext not in {".txt", ".pdf", ".docx"} or len(data) > max_bytes or not data:
-            raise HTTPException(status_code=422, detail="Unsupported or oversized attachment.")
-        target_dir = Path(settings.attachments_dir) / str(conversation.session_id)
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / f"{uuid4().hex[:12]}{ext}"
-        target.write_bytes(data)
+        try:
+            ext = validate_upload(file.filename, data, max_bytes)
+            entry = await run_in_threadpool(
+                attachment_store.save, str(conversation.id), file.filename, data, ext
+            )
+        except AttachmentError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (AttachmentStoreError, OSError) as exc:
+            logger.exception("Could not store a visitor attachment")
+            raise attachments_unavailable() from exc
+
+        # Same language choice as chat: the header, else the conversation's language.
+        language = (
+            x_reply_language
+            or (conversation.messages[-1].language if conversation.messages else None)
+            or store.get_session(x_session_id).locale
+        )
+        language = language if language in ACKNOWLEDGEMENTS else "en"
+        texts = ACKNOWLEDGEMENTS[language]
+        user_text = redact_message(texts["user"].format(filename=entry["filename"]))
+        store.append_message(conversation, "user", user_text, language)
+        reply = store.append_message(conversation, "assistant", texts["reply"], language)
+        for message in conversation.messages[-2:]:
+            global_audit_store.log_transcript(
+                session_id=conversation.session_id,
+                conversation_id=conversation.id,
+                sequence=message.sequence,
+                role=message.role,
+                content=message.content,
+                language=language,
+            )
         return {
-            "attachment_id": target.stem,
-            "filename": Path(file.filename or "").name,
-            "status": "stored",
-            "note": "Attachments are session-scoped and are never transmitted to CRM or indexed as company knowledge.",
+            "attachment_id": entry["id"],
+            "filename": entry["filename"],
+            "reply": reply.content,
+            "message_id": str(reply.id),
         }
+
+    @app.get("/v1/staff/conversations/{conversation_id}/attachments", tags=["attachments"])
+    async def list_conversation_attachments(conversation_id: UUID):
+        """Attachment metadata for one conversation (staff, service token)."""
+        require_attachments_enabled()
+        try:
+            entries = await run_in_threadpool(attachment_store.list_for, str(conversation_id))
+        except AttachmentStoreError as exc:
+            raise attachments_unavailable() from exc
+        return [public_attachment(e) for e in entries]
+
+    @app.get("/v1/staff/attachments/{attachment_id}", tags=["attachments"])
+    async def download_attachment(attachment_id: str):
+        """Download a stored attachment as received (staff, service token)."""
+        require_attachments_enabled()
+        try:
+            found = await run_in_threadpool(attachment_store.find, attachment_id)
+        except AttachmentStoreError as exc:
+            raise attachments_unavailable() from exc
+        if found is None or not found[1].is_file():
+            raise HTTPException(status_code=404, detail="Attachment not found.")
+        entry, path = found
+        return FileResponse(
+            path,
+            media_type=CONTENT_TYPES[entry["extension"]],
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(entry['filename'], safe='')}",
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "private, no-store",
+            },
+        )
 
     return app
 

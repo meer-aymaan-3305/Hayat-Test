@@ -15,21 +15,26 @@ class _BodyTooLarge(Exception):
 
 
 class UploadSizeLimitMiddleware:
-    """Return 413 for POST/PUT bodies over the limit on the given upload routes.
+    """Return 413 for POST/PUT bodies over the limit on the given upload routes
+    (matched by path prefix or suffix).
 
     A declared Content-Length is checked before anything is read; bodies sent
     without one (chunked) are counted as they arrive and cut off at the limit."""
 
-    def __init__(self, app: ASGIApp, *, max_body_bytes: int, prefixes: tuple[str, ...]) -> None:
+    def __init__(
+        self, app: ASGIApp, *, max_body_bytes: int, prefixes: tuple[str, ...],
+        suffixes: tuple[str, ...] = (),
+    ) -> None:
         self.app = app
         self.max_body_bytes = max_body_bytes
         self.prefixes = prefixes
+        self.suffixes = suffixes
 
     def _applies(self, scope: Scope) -> bool:
         return (
             scope["type"] == "http"
             and scope["method"] in {"POST", "PUT"}
-            and scope["path"].startswith(self.prefixes)
+            and (scope["path"].startswith(self.prefixes) or scope["path"].endswith(self.suffixes))
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
