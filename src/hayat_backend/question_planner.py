@@ -281,6 +281,9 @@ class QuestionPlanner:
     @staticmethod
     def _category(conversation: Any) -> str | None:
         value = conversation.case_facts.get("customer_category")
+        if isinstance(value, dict):
+            value = value.get("value") or value.get("canonical") or next(
+                (v for v in value.values() if isinstance(v, str)), None)
         if value in {"medical_treatment", "wellness"}:
             return value
         care_category = conversation.case_facts.get("care_category")

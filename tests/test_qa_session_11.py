@@ -79,3 +79,14 @@ def test_recall_no_facts_falls_through():
     svc.store.append_message(conv, "assistant", "Hi!", "en")
     r = asyncio.run(svc.respond(conv, "What are my preferences?", visitor="guest", use_ai=False))["reply"]
     assert "Here's what I have" not in r  # no fabricated recall
+
+
+def test_recall_unwraps_dict_category():
+    """D2: customer_category stored as dict must not leak raw repr."""
+    svc = _svc()
+    conv = _conv(svc)
+    svc.store.append_message(conv, "assistant", "Hi!", "en")
+    conv.case_facts["customer_category"] = {"value": "medical_treatment"}
+    conv.case_facts["destination_preference"] = "India"
+    r = asyncio.run(svc.respond(conv, "What are my preferences?", visitor="guest", use_ai=False))["reply"]
+    assert "medical travel" in r and "India" in r and "{" not in r

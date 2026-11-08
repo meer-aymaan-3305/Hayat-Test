@@ -94,7 +94,7 @@ _RECALL_FIELDS = (
 )
 _RECALL_LABELS = {
     "en": {
-        "customer_category": {"medical_treatment": "medical travel", "wellness": "wellness"},
+        "customer_category": "type",
         "procedure_or_service": "treatment/specialty",
         "wellness_programme_or_goal": "wellness goal",
         "destination_preference": "destination",
@@ -104,7 +104,7 @@ _RECALL_LABELS = {
         "insurance_coverage_status": "insurance",
     },
     "ar": {
-        "customer_category": {"medical_treatment": "السفر الطبي", "wellness": "العافية"},
+        "customer_category": "النوع",
         "procedure_or_service": "العلاج/التخصص",
         "wellness_programme_or_goal": "هدف العافية",
         "destination_preference": "الوجهة",
@@ -113,6 +113,12 @@ _RECALL_LABELS = {
         "value_priority": "الأولوية",
         "insurance_coverage_status": "التأمين",
     },
+}
+
+
+_RECALL_CATEGORY_LABELS = {
+    "en": {"medical_treatment": "medical travel", "wellness": "wellness"},
+    "ar": {"medical_treatment": "السفر الطبي", "wellness": "العافية"},
 }
 
 
@@ -125,8 +131,15 @@ def _recall_reply(conversation: "Conversation", language: str) -> str | None:
         value = facts.get(field)
         if value in (None, ""):
             continue
+        if isinstance(value, dict):
+            # Unwrap canonical structures (e.g. {"value": ..., "canonical": ...}).
+            value = value.get("value") or value.get("canonical") or next(
+                (v for v in value.values() if isinstance(v, str)), "")
+            if not value:
+                continue
         if field == "customer_category":
-            value = labels["customer_category"].get(str(value), str(value))
+            value = _RECALL_CATEGORY_LABELS.get(language, _RECALL_CATEGORY_LABELS["en"]).get(
+                str(value), str(value))
         else:
             value = str(value)
         if field == "preferred_timing" and facts.get("preferred_dates_times"):
