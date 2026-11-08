@@ -1,0 +1,16 @@
+{
+  "english": {
+    "model": "canopylabs/orpheus-v1-english",
+    "voice": "austin",
+    "status": 400,
+    "code": "model_terms_required"
+  },
+  "arabic": {
+    "model": "canopylabs/orpheus-arabic-saudi",
+    "voice": "abdullah",
+    "status": 400,
+    "code": "model_terms_required"
+  },
+  "api_key_valid": true,
+  "note": "terms still required after reported acceptance \u2014 likely wrong org/key or propagation; models endpoint 200"
+}

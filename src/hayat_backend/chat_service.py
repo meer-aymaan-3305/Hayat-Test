@@ -44,6 +44,15 @@ shadow_logger = logging.getLogger("hayat.shadow")
 SHADOW_CALLS_PER_MINUTE = 20
 
 
+_AR_INDIC = "٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹"
+_AR_DIGITS = "01234567890123456789"
+
+
+def _normalize_digits(text: str) -> str:
+    """Map Arabic-Indic and Extended Arabic-Indic digits to ASCII."""
+    return text.translate(str.maketrans(_AR_INDIC, _AR_DIGITS))
+
+
 def _opening(language: str) -> str:
     return "مرحباً! " if language == "ar" else "Hello! "
 
@@ -66,6 +75,81 @@ ARABIC_QUESTIONS = {
     "Would you like help with a medical treatment or a wellness programme?": "هل تود المساعدة في علاج طبي أم في برنامج عافية؟",
     "Would you like to request a consultation with a coordinator using these details?": "هل ترغب في طلب استشارة مع منسق بناءً على هذه التفاصيل؟",
 }
+
+
+_RECALL_RE = re.compile(
+    r"\b(what did i (?:tell|say|mention)|my preferences?|what do you know about me|"
+    r"remind me what|what have i (?:told|shared)|recap|summary of what i|"
+    r"what are my (?:details|preferences)|what info do you have)\b|"
+    r"ماذا أخبرتك|تفضيلاتي|ما الذي أخبرتك به|ذكّرني بما|لخص تفضيلاتي|معلوماتي",
+    re.IGNORECASE,
+)
+
+# Permitted administrative facts safe to echo back to the visitor who
+# supplied them. Contact identifiers and clinical data are never recalled.
+_RECALL_FIELDS = (
+    "customer_category", "procedure_or_service", "wellness_programme_or_goal",
+    "destination_preference", "preferred_timing", "budget_range",
+    "value_priority", "insurance_coverage_status",
+)
+_RECALL_LABELS = {
+    "en": {
+        "customer_category": "type",
+        "procedure_or_service": "treatment/specialty",
+        "wellness_programme_or_goal": "wellness goal",
+        "destination_preference": "destination",
+        "preferred_timing": "timeframe",
+        "budget_range": "budget",
+        "value_priority": "priority",
+        "insurance_coverage_status": "insurance",
+    },
+    "ar": {
+        "customer_category": "النوع",
+        "procedure_or_service": "العلاج/التخصص",
+        "wellness_programme_or_goal": "هدف العافية",
+        "destination_preference": "الوجهة",
+        "preferred_timing": "الإطار الزمني",
+        "budget_range": "الميزانية",
+        "value_priority": "الأولوية",
+        "insurance_coverage_status": "التأمين",
+    },
+}
+
+
+_RECALL_CATEGORY_LABELS = {
+    "en": {"medical_treatment": "medical travel", "wellness": "wellness"},
+    "ar": {"medical_treatment": "السفر الطبي", "wellness": "العافية"},
+}
+
+
+def _recall_reply(conversation: "Conversation", language: str) -> str | None:
+    """Deterministically echo back the visitor's own stored admin facts."""
+    facts = getattr(conversation, "case_facts", {}) or {}
+    parts: list[str] = []
+    labels = _RECALL_LABELS.get(language, _RECALL_LABELS["en"])
+    for field in _RECALL_FIELDS:
+        value = facts.get(field)
+        if value in (None, ""):
+            continue
+        if isinstance(value, dict):
+            # Unwrap canonical structures (e.g. {"value": ..., "canonical": ...}).
+            value = value.get("value") or value.get("canonical") or next(
+                (v for v in value.values() if isinstance(v, str)), "")
+            if not value:
+                continue
+        if field == "customer_category":
+            value = _RECALL_CATEGORY_LABELS.get(language, _RECALL_CATEGORY_LABELS["en"]).get(
+                str(value), str(value))
+        else:
+            value = str(value)
+        if field == "preferred_timing" and facts.get("preferred_dates_times"):
+            continue  # avoid duplicate timing entries
+        parts.append(f"{labels[field]}: {value}")
+    if not parts:
+        return None
+    if language == "ar":
+        return "إليك ما أحتفظ به حتى الآن: " + "، ".join(parts) + "."
+    return "Here's what I have so far: " + "; ".join(parts) + "."
 
 
 def _clarify(language: str) -> str:
@@ -506,6 +590,15 @@ class ChatService:
         ]
         profile = self.store.save_fact_updates(conversation, fact_updates)
 
+        # CP-5 exact-summary rule: confirmation covers the summary the user saw.
+        # If any permitted Appendix A detail changed after confirmation, the
+        # earlier confirmation no longer applies and must be renewed.
+        if conversation.cp5_confirmed_at is not None and any(
+            fact.field_name in PERMITTED_FIELD_NAMES for fact in fact_updates
+        ):
+            conversation.cp5_confirmed_at = None
+            conversation.confirmed_appendix_a = None
+
         # Evaluate guardrails with conversation context and extracted facts
         decision = inspect_input(
             text,
@@ -551,12 +644,20 @@ class ChatService:
                     if not isinstance(v, dict) and k in PERMITTED_FIELD_NAMES
                 }
                 conversation.confirmed_appendix_a = confirmed_payload
-                await self.crm_client.transmit_confirmed_payload(
-                    session_id=conversation.session_id,
-                    conversation_id=conversation.id,
-                    payload=confirmed_payload,
-                    confirmation_timestamp=conversation.cp5_confirmed_at,
+                # Idempotent transmission: an identical already-confirmed payload
+                # must not be dispatched to the CRM twice.
+                already_transmitted = (
+                    getattr(conversation, "crm_payload_transmitted", None) == confirmed_payload
                 )
+                if not already_transmitted:
+                    await self.crm_client.transmit_confirmed_payload(
+                        session_id=conversation.session_id,
+                        conversation_id=conversation.id,
+                        payload=confirmed_payload,
+                        confirmation_timestamp=conversation.cp5_confirmed_at,
+                        explicit_user_confirmation=True,
+                    )
+                    conversation.crm_payload_transmitted = confirmed_payload
                 self.coordinator_service.initiate_handoff(
                     conversation=conversation,
                     session_id=conversation.session_id,
@@ -571,6 +672,8 @@ class ChatService:
                 )
             elif consent_type in ("NEGATIVE", "CONDITIONAL", "CONTRADICTORY", "DEFERRED"):
                 conversation.cp5_confirmed_at = None
+                conversation.confirmed_appendix_a = None
+                conversation.crm_payload_transmitted = None
                 clarification_reply = consent_note
 
         consent_granted = self._persist_conversational_data(
@@ -592,6 +695,8 @@ class ChatService:
         self.store.set_conversation_state(conversation, self._state_for_plan(plan, conversation))
 
         chunks: list[KnowledgeChunk] = []
+        scored_chunks: list[tuple[float, KnowledgeChunk]] = []
+        reply_used_knowledge = False
         reply: str | None = None
 
         if submission is not None:
@@ -608,7 +713,8 @@ class ChatService:
         elif decision.reply:
             reply = decision.reply
         else:
-            chunks = await self.retriever.retrieve(text)
+            scored_chunks = await self.retriever.retrieve_scored(text)
+            chunks = [chunk for _, chunk in scored_chunks]
             knowledge = "\n\n".join(chunk.text for chunk in chunks)
             prior_history = [
                 {"role": message.role, "content": message.content}
@@ -662,13 +768,19 @@ class ChatService:
             try:
                 generated = None if not use_ai else await self.model.complete(model_messages)
                 reply = validate_output(generated, language) if generated else None
+                # An AI reply generated with approved evidence counts as grounded.
+                reply_used_knowledge = reply is not None and bool(chunks)
             except (LLMError, TypeError, ValueError):
                 reply = None
 
         # Robust context-aware fallbacks when model completion fails or returns None
         if reply is None:
             lower_text = text.lower()
-            if "compare" in lower_text or "destination" in lower_text or "مقارن" in text or "وجه" in text:
+            recall = _recall_reply(conversation, language) if _RECALL_RE.search(text) else None
+            if recall:
+                reply = recall
+            elif "compare" in lower_text or "destination" in lower_text or "مقارن" in text or "وجه" in text:
+                reply_used_knowledge = bool(chunks)
                 reply = (
                     "A case manager can compare destinations with you once we understand your preferences. "
                     "Which destination are you considering?"
@@ -676,6 +788,7 @@ class ChatService:
                     "يمكن لمدير الحالة مقارنة الوجهات معك بعد فهم تفضيلاتك. ما الوجهة التي تفكر فيها؟"
                 )
             elif "prepare" in lower_text or "document" in lower_text or "information" in lower_text or "تجهيز" in text or "مستند" in text:
+                reply_used_knowledge = bool(chunks)
                 reply = (
                     "To prepare for your consultation, it is helpful to have your recent medical records, reports, "
                     "or current medication list available if you have them. A coordinator will advise if specific records are needed."
@@ -714,7 +827,24 @@ class ChatService:
                         else f"مفهوم — أنت مهتم ببرنامج {wellness_goal}."
                     )
                 else:
-                    reply = _clarify(language)
+                    # Journey-aware acknowledgement so the planned follow-up
+                    # question is not swallowed by a generic clarify reply.
+                    if plan.target_field == "procedure_or_service":
+                        reply = (
+                            "Medical travel is one of our core services — a coordinator can "
+                            "prepare options once I understand what you need."
+                            if language == "en"
+                            else "السفر الطبي من الخدمات الأساسية لدينا — يمكن للمنسق إعداد الخيارات بعد فهم احتياجاتك."
+                        )
+                    elif plan.target_field == "wellness_programme_or_goal":
+                        reply = (
+                            "Wellness is a big part of what we do — I can point you to the "
+                            "right experience once I know your goal."
+                            if language == "en"
+                            else "العافية جزء كبير مما نقدمه — يمكنني إرشادك إلى التجربة المناسبة بعد معرفة هدفك."
+                        )
+                    else:
+                        reply = _clarify(language)
 
         # Single composition layer: Append the planned question only if not already present
         if clarification_reply is None and not decision.reply and submission is None and decision.reason != "out_of_scope":
@@ -728,7 +858,17 @@ class ChatService:
                 planned = replace(plan, question_text=ARABIC_QUESTIONS[plan.question_text])
             reply = append_planned_question(reply, planned)
         if plan.decision_type in {"account_request_saved", "sign_in_required"}:
-            reply = _account_reply(plan.decision_type, language)
+            cta = _account_reply(plan.decision_type, language)
+            # Do not repeat the identical sign-in CTA on consecutive turns —
+            # keep the substantive reply instead. Guests may always keep
+            # asking ordinary questions; the CTA resurfaces only after the
+            # conversation moves on.
+            prev_assistant = next(
+                (m for m in reversed(conversation.messages[:-1]) if m.role == "assistant"),
+                None,
+            )
+            if not (plan.decision_type == "sign_in_required" and prev_assistant and cta in prev_assistant.content):
+                reply = cta
 
         # Prepend opening greeting only on the user's first message if not an emergency or crisis
         if prior_user_message_count == 0 and not decision.escalation_required and decision.reason not in ("possible_emergency", "crisis_self_harm", "EF-9", "EF-10"):
@@ -743,16 +883,28 @@ class ChatService:
             content=reply,
             language=language,
         )
+        # Surface source attribution only when the reply actually relied on
+        # retrieved approved knowledge — never mark unsupported answers as
+        # sourced. Weak matches (score < 2.0) are excluded.
         sources = []
-        if submission is None and not decision.reply and decision.reason is None and chunks:
-            sources = [
-                {
+        if (
+            submission is None
+            and not decision.reply
+            and decision.reason is None
+            and reply_used_knowledge
+        ):
+            seen_docs: set[str] = set()
+            for score, chunk in scored_chunks:
+                if score < 2.0 or chunk.source.document_id in seen_docs:
+                    continue
+                seen_docs.add(chunk.source.document_id)
+                sources.append({
                     "document_id": chunk.source.document_id,
                     "title": chunk.source.title,
                     "version": chunk.source.version,
-                }
-                for chunk in chunks
-            ]
+                })
+                if len(sources) >= 3:
+                    break
 
         result = {
             "user_message": user_message,
@@ -932,6 +1084,9 @@ class ChatService:
         conversation: Conversation | None = None,
         pending_field: str | None = None,
     ) -> list[FactValue]:
+        # Normalise Arabic-Indic (٠-٩) and Extended Arabic-Indic (۰-۹) digits
+        # so all downstream patterns work on a single digit alphabet.
+        text = _normalize_digits(text)
         updates: list[FactValue] = []
 
         # Email
@@ -962,7 +1117,7 @@ class ChatService:
             ))
 
         # Customer category selection & switching
-        if re.search(r"\b(medical treatment|medical care)\b|علاج طبي", text, re.IGNORECASE):
+        if re.search(r"\b(medical treatment|medical care)\b|علاج طبي|سفر\s+طبي|السفر\s+الطبي|عملية\s+طبية", text, re.IGNORECASE):
             updates.append(FactValue(
                 field_name="customer_category", value="medical_treatment",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
@@ -971,7 +1126,7 @@ class ChatService:
                 field_name="care_category", value="medical",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
-        elif re.search(r"\b(wellness programme?|wellness program)\b|برنامج عافية", text, re.IGNORECASE):
+        elif re.search(r"\b(wellness programme?|wellness program)\b|برنامج عافية|تجربة عافية|رحلة عافية|برنامج لياقة|لياقة بدنية", text, re.IGNORECASE):
             updates.append(FactValue(
                 field_name="customer_category", value="wellness",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
@@ -1035,7 +1190,7 @@ class ChatService:
         # Wellness goal extraction
         wellness_patterns = [
             r"\b(mental health and stress management|mental health|stress management|stress|better sleep|sleep improvement|healthy ageing|healthy aging|longevity|detox|detoxification|mindfulness|weight management|burnout|holistic health|rehabilitation|recovery)\b",
-            r"(إدارة التوتر|الصحة النفسية|تحسين النوم|الشيخوخة الصحية|طول العمر|ديتوكس|استرخاء)",
+            r"(إدارة التوتر|الصحة النفسية|تحسين النوم|الشيخوخة الصحية|طول العمر|ديتوكس|استرخاء|لياقة|رشاقة|عافية|سبا|تأمل)",
         ]
         wellness_goal_found = False
         for wp in wellness_patterns:
@@ -1087,7 +1242,8 @@ class ChatService:
                     r"pulmonology|rheumatology|hematology|psychiatry|gynecology|obstetrics|"
                     r"dentistry|dental|dental implants|heart treatment|treatment for my heart|"
                     r"knee replacement|knee surgery|spine surgery|hair transplant|bariatric|cosmetic)\b|"
-                    r"\b[a-zA-Z]{3,}(?:ology|iatry|ics|surgery|therapy|plasty)\b",
+                    r"\b[a-zA-Z]{3,}(?:ology|iatry|ics|surgery|therapy|plasty)\b|"
+                    r"(قسطرة|قلب|أسنان|طب أسنان|عظام|جلدية|أورام|عيون|تجميل|خصوبة|أطفال|باطنية|علاج طبيعي)",
                     clean_sub or clean or text,
                     re.IGNORECASE,
                 )
@@ -1152,6 +1308,13 @@ class ChatService:
                 field_name="destination_preference", value=dest_name,
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
+        elif re.search(r"\b(flexible|open to exploring|no preference|any destination|"
+                       r"help me choose|help me decide|not sure yet|up to you)\b|"
+                       r"مرن|لا\s+تفضيل|أي\s+وجهة|ساعدني\s+أختار|غير\s+متأكد\s+بعد", text, re.I):
+            updates.append(FactValue(
+                field_name="destination_preference", value="Flexible",
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=0.9,
+            ))
         elif re.search(r"\b(compare destinations|help me compare|recommend a destination|which destination|guidance)\b|مقارنة الوجهات", text, re.I):
             updates.append(FactValue(
                 field_name="destination_preference", value="Guidance requested",
@@ -1162,10 +1325,12 @@ class ChatService:
         timing_match = re.search(
             r"\b(?:within\s+(?:the\s+)?|in\s+(?:the\s+)?|during\s+(?:the\s+)?)?"
             r"(?:next\s+(?:\d+\s+|three\s+|two\s+|six\s+)?(?:months?|weeks?|year)|"
-            r"(?:in|within)\s+\d+\s+(?:months?|weeks?)|"
+            r"(?:in|within|over)\s+(?:the\s+next\s+|the\s+)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|a\s+few|couple\s+of)\s+(?:months?|weeks?|years?)|"
+            r"sometime\s+(?:over|in|during)\s+(?:the\s+)?(?:next\s+)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|few|couple)\s+(?:months?|weeks?|years?)|"
             r"December|January|February|March|April|May|June|July|August|September|October|November|soon|asap|"
             r"weekday afternoons?|weekday mornings?|weekends?)\b|"
-            r"(يناير|فبراير|مارس|أبريل|مايو|يونيو|يوليو|أغسطس|سبتمبر|أكتوبر|نوفمبر|ديسمبر|شهر|أسبوع|قريبا|المقبل)",
+            r"(يناير|فبراير|مارس|أبريل|مايو|يونيو|يوليو|أغسطس|سبتمبر|أكتوبر|نوفمبر|ديسمبر|شهر|أسبوع|قريبا|المقبل|"
+            r"خلال\s+\S+\s+(?:أشهر|أسابيع|أيام)|خلال\s+(?:أشهر|أسابيع|أيام)|الشهر\s+المقبل|الأسبوع\s+المقبل)",
             text,
             re.IGNORECASE,
         )
@@ -1181,10 +1346,15 @@ class ChatService:
             ))
 
         # Budget range
-        budget_match = re.search(r"\b(?:budget|between)\s+([A-Z$€£0-9][A-Za-z$€£0-9,\s.-]{1,40})", text, re.I)
+        budget_match = re.search(
+            r"\b(?:budget|between)\s+([A-Z$€£0-9][A-Za-z$€£0-9,\s.-]{1,40})|"
+            r"(?:ميزانية|ميزانيتي|الميزانية)\s*(?:حوالي|تقريبا|بين|مبلغ)?\s*"
+            r"([0-9][0-9,.\s]{0,15}(?:ألف|الف|دولار|درهم|ريال|يورو|$|€|£)?)",
+            text, re.I)
         if budget_match:
             updates.append(FactValue(
-                field_name="budget_range", value=budget_match.group(1).strip(),
+                field_name="budget_range",
+                value=(budget_match.group(1) or budget_match.group(2) or "").strip(),
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
 
@@ -1203,6 +1373,10 @@ class ChatService:
             "recovery": "recovery", "cardiology": "cardiology", "cardiac": "cardiology",
             "heart": "cardiology", "dermatology": "dermatology", "oncology": "oncology",
             "neurology": "neurology",
+            "قسطرة": "cardiology", "قلب": "cardiology", "أسنان": "dental", "طب أسنان": "dental",
+            "عظام": "orthopedic", "جلدية": "dermatology", "أورام": "oncology",
+            "تجميل": "aesthetic", "خصوبة": "fertility", "أطفال": "pediatrics",
+            "باطنية": "internal_medicine", "علاج طبيعي": "physiotherapy",
         }
         for term, value in service_terms.items():
             if re.search(rf"\b{term}\b", text, re.IGNORECASE):
@@ -1238,34 +1412,40 @@ class ChatService:
             ))
 
         # Insurance coverage status
-        if re.search(r"\b(no insurance|not covered|without insurance|self[- ]pay|uninsured)\b", text, re.I):
+        if re.search(r"\b(no insurance|not covered|without insurance|self[- ]pay|uninsured)\b|"
+                     r"(?:لا|ليس|مو|ما)\s+(?:يوجد|لدي|معي|عندي)\s+تأمين|بدون\s+تأمين|غير\s+مشمول|بدون\s+تغطية|ما\s+عندي\s+تأمين", text, re.I):
             updates.append(FactValue(
                 field_name="insurance_coverage_status", value="not_covered",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
-        elif re.search(r"\b(have insurance|covered by insurance|insurance covered|insured)\b", text, re.I):
+        elif re.search(r"\b(have insurance|covered by insurance|insurance covered|insured)\b|"
+                       r"لدي\s+تأمين|معي\s+تأمين|مشمول\s+بالتأمين|مغطى\s+بالتأمين", text, re.I):
             updates.append(FactValue(
                 field_name="insurance_coverage_status", value="covered",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
 
         # Value priority
-        if re.search(r"\b(cost[- ]effective(?:ness)?|affordable|budget[- ]friendly|save money|lowest cost)\b", text, re.I):
+        if re.search(r"\b(cost[- ]effective(?:ness)?|affordable|budget[- ]friendly|save money|lowest cost)\b|"
+                     r"أرخص|أقل\s+تكلفة|اقتصادي|بميزانية\s+محدودة|توفير\s+المال", text, re.I):
             updates.append(FactValue(
                 field_name="value_priority", value="cost-effectiveness",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
-        elif re.search(r"\b(comfort|luxury|premium|five star)\b", text, re.I):
+        elif re.search(r"\b(comfort|luxury|premium|five star)\b|"
+                       r"فخامة|فاخر|مريح|راحة|فندق\s+خمس\s+نجوم|راحة\s+فاخرة", text, re.I):
             updates.append(FactValue(
                 field_name="value_priority", value="comfort",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
-        elif re.search(r"\b(best[- ]available service|top quality|best service|best care)\b", text, re.I):
+        elif re.search(r"\b(best[- ]available service|top quality|best service|best care)\b|"
+                       r"أفضل\s+خدمة|أعلى\s+جودة|أفضل\s+رعاية|خدمة\s+متميزة", text, re.I):
             updates.append(FactValue(
                 field_name="value_priority", value="best-available service",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
-        elif re.search(r"\b(speed|fastest|quickest|immediate)\b", text, re.I):
+        elif re.search(r"\b(speed|fastest|quickest|immediate)\b|"
+                       r"أسرع|بسرعة|فوراً|فورا|في\s+أسرع\s+وقت", text, re.I):
             updates.append(FactValue(
                 field_name="value_priority", value="speed",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,

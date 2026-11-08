@@ -24,6 +24,9 @@ class Settings(BaseModel):
     jwt_system_secret: SecretStr | None = None
     groq_api_key: SecretStr | None = None
     groq_model: str = "allam-2-7b"
+    groq_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    groq_max_tokens: int = Field(default=160, ge=1, le=4096)
+    groq_timeout_seconds: float = Field(default=20.0, ge=1.0, le=120.0)
     supabase_url: str | None = None
     supabase_service_role_key: SecretStr | None = None
     allowed_origins: list[str] = Field(default_factory=list)
@@ -38,6 +41,16 @@ class Settings(BaseModel):
     medical_ai_replies: bool = False
     medical_ai_shadow: bool = False
     trawellcare_crm_webhook_url: str | None = None
+    knowledge_dir: str = "data/knowledge"
+    attachments_dir: str = "data/attachments"
+    visitor_attachments_enabled: bool = False
+    max_upload_mb: int = Field(default=10, ge=1, le=50)
+    groq_stt_model: str = "whisper-large-v3"
+    groq_stt_language: str | None = None
+    groq_tts_model_en: str = "canopylabs/orpheus-v1-english"
+    groq_tts_model_ar: str = "canopylabs/orpheus-arabic-saudi"
+    groq_tts_voice_en: str = "austin"
+    groq_tts_voice_ar: str = "abdullah"
 
     @property
     def missing_integrations(self) -> list[str]:
@@ -86,6 +99,9 @@ def load_settings() -> Settings:
             jwt_system_secret=values.get("JWT_SYSTEM_SECRET") or None,
             groq_api_key=values.get("GROQ_API_KEY"),
             groq_model=values.get("GROQ_MODEL", "allam-2-7b"),
+            groq_temperature=values.get("GROQ_TEMPERATURE", 0.2),
+            groq_max_tokens=values.get("GROQ_MAX_TOKENS", 160),
+            groq_timeout_seconds=values.get("GROQ_TIMEOUT_SECONDS", 20.0),
             supabase_url=values.get("SUPABASE_URL"),
             supabase_service_role_key=values.get("SUPABASE_SERVICE_ROLE_KEY"),
             allowed_origins=[
@@ -104,6 +120,16 @@ def load_settings() -> Settings:
             medical_ai_replies=values.get("MEDICAL_AI_REPLIES", "false").lower() in ("true", "1", "yes"),
             medical_ai_shadow=values.get("MEDICAL_AI_SHADOW", "false").lower() in ("true", "1", "yes"),
             trawellcare_crm_webhook_url=values.get("TRAWELLCARE_CRM_WEBHOOK_URL"),
+            knowledge_dir=values.get("KNOWLEDGE_DIR", "data/knowledge"),
+            attachments_dir=values.get("ATTACHMENTS_DIR", "data/attachments"),
+            visitor_attachments_enabled=values.get("VISITOR_ATTACHMENTS_ENABLED", "false").lower() in ("true", "1", "yes"),
+            max_upload_mb=values.get("MAX_UPLOAD_MB", 10),
+            groq_stt_model=values.get("GROQ_STT_MODEL", "whisper-large-v3"),
+            groq_stt_language=values.get("GROQ_STT_LANGUAGE") or None,
+            groq_tts_model_en=values.get("GROQ_TTS_MODEL_EN", "canopylabs/orpheus-v1-english"),
+            groq_tts_model_ar=values.get("GROQ_TTS_MODEL_AR", "canopylabs/orpheus-arabic-saudi"),
+            groq_tts_voice_en=values.get("GROQ_TTS_VOICE_EN", "austin"),
+            groq_tts_voice_ar=values.get("GROQ_TTS_VOICE_AR", "abdullah"),
         )
         settings.validate_integrations()
         return settings

@@ -249,7 +249,26 @@ class InMemoryRetriever:
     def __init__(self, chunks: list[KnowledgeChunk] | None = None) -> None:
         self._chunks = list(chunks) if chunks is not None else list(DEFAULT_APPROVED_KNOWLEDGE)
 
+    def replace_uploaded(self, chunks: list[KnowledgeChunk]) -> None:
+        """Swap in re-indexed approved-knowledge chunks (built-in defaults stay)."""
+        self._chunks = [
+            c for c in self._chunks
+            if not c.source.document_id.startswith("doc-")
+        ] + list(chunks)
+
+    def add_chunks(self, chunks: list[KnowledgeChunk]) -> None:
+        """Add newly indexed approved-knowledge chunks."""
+        self._chunks.extend(chunks)
+
+    async def retrieve_scored(self, query: str, limit: int = 3) -> list[tuple[float, KnowledgeChunk]]:
+        """Like retrieve() but keeps relevance scores for attribution gating."""
+        return await self._retrieve(query, limit)
+
     async def retrieve(self, query: str, limit: int = 3) -> list[KnowledgeChunk]:
+        scored = await self._retrieve(query, limit)
+        return [chunk for _, chunk in scored]
+
+    async def _retrieve(self, query: str, limit: int = 3) -> list[tuple[float, KnowledgeChunk]]:
         stopwords = {
             "a", "an", "the", "and", "or", "in", "on", "at", "to", "for", "of", "with",
             "is", "are", "was", "were", "be", "been", "i", "me", "my", "you", "your",
@@ -308,4 +327,4 @@ class InMemoryRetriever:
                 scored.append((score, chunk))
 
         scored.sort(key=lambda item: item[0], reverse=True)
-        return [chunk for _, chunk in scored[:limit]]
+        return scored[:limit]

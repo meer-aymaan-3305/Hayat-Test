@@ -174,8 +174,8 @@ def test_scenario_5_please_help_me_compare_destinations():
     res = client.post("/v1/chat", headers=auth, json={"conversation_id": cid, "message": "Please help me compare destinations."}).json()
     assert "only about Hayat services" not in res["reply"]
     assert res["escalation_required"] is False
-    # Must offer grounded comparison
-    assert any(country in res["reply"] for country in ["India", "Oman", "UAE", "Thailand"])
+    # Must NOT fabricate destination comparisons or rankings
+    assert "coordinator" in res["reply"].lower()
 
 
 def test_scenario_6_unlisted_valid_medical_specialty():

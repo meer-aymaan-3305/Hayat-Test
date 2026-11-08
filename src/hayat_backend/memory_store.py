@@ -59,6 +59,7 @@ class Conversation:
     crisis_locked: bool = False
     cp5_confirmed_at: datetime | None = None
     confirmed_appendix_a: dict[str, Any] | None = None
+    crm_payload_transmitted: dict[str, Any] | None = None
     persona_name: str | None = None
     persona_status: str = "UNRESOLVED"
 

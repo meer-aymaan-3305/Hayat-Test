@@ -55,7 +55,7 @@ _PROGRAMME_DETECTION_RE = re.compile(
     r"healthy ageing|healthy aging|longevity|"
     r"women'?s (?:fitness|wellness|retreat)|executive (?:fitness|wellness|retreat)|"
     r"wellness retreats?|retreats?)\b|"
-    r"برامج العافية المتميزة|برامج متميزة|حياة[- ]?100|عافية|فاوندرز|طول العمر|الشيخوخة الصحية|منتجع طول العمر|منتجع السيدات|منتجع القادة|منتجعات العافية",
+    r"برامج العافية المتميزة|برامج متميزة|حياة[- ]?100|فاوندرز|طول العمر|الشيخوخة الصحية|منتجع طول العمر|منتجع السيدات|منتجع القادة|منتجعات العافية",
     re.IGNORECASE,
 )
 
@@ -362,7 +362,7 @@ class ProgrammeConversationService:
             return self._build_result(enquiry, reply, suggestions, language)
 
         # If user selected or mentioned women's wellness / AAfiya:
-        if enquiry.primary_programme != "aafiya" and re.search(r"\b(women'?s (?:wellness|fitness|retreat)|aafiya|aafiyah|pilates|yoga for women)\b|عافية|لياقة السيدات|عافية السيدات", lower_text):
+        if enquiry.primary_programme != "aafiya" and re.search(r"\b(women'?s (?:wellness|fitness|retreat)|aafiya|aafiyah|pilates|yoga for women)\b|عافية\s+السيدات|لياقة\s+السيدات|برنامج\s+السيدات|منتجع\s+السيدات|نسائي", lower_text):
             enquiry.primary_programme = "aafiya"
             if "aafiya" not in enquiry.interested_programmes:
                 enquiry.interested_programmes.append("aafiya")
@@ -622,7 +622,8 @@ class ProgrammeConversationService:
 
         enquiry.registration_status = RegistrationStatus.INTEREST_REGISTERED
         enquiry.enquiry_status = EnquiryStatus.SUBMITTED
-        enquiry.contact_consent_status = ContactConsentStatus.GRANTED
+        # No contact details are collected in chat, so contact consent stays
+        # PENDING — it can only become GRANTED through the approved secure flow.
         enquiry.current_stage = ProgrammeStage.REGISTERED_INTEREST
 
         assign_reference_code(enquiry)

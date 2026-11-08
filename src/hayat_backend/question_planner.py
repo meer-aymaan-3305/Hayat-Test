@@ -28,6 +28,43 @@ _QUESTION_INTENT = re.compile(
     re.IGNORECASE,
 )
 
+# First-turn journey hints: distinguish medical travel from general wellness
+# (and signature programmes, which are intercepted earlier) so the first
+# follow-up question is relevant instead of a generic either/or clarify.
+_MEDICAL_HINT_RE = re.compile(
+    r"\b(medical|medicine|treatment|procedure|surgery|hospital|doctor|specialist|"
+    r"clinic|dental|cardiology|cardiologist|orthop\w+|dermatolog\w+|oncolog\w+|"
+    r"medical travel|travell?ing for|travel for)\b|"
+    r"سفر\s+طبي|عملية\s+طبية|سفر|علاج|جراحة|مستشفى|طبيب|أسنان|قسطرة|باطنية|تجميل",
+    re.IGNORECASE,
+)
+_WELLNESS_HINT_RE = re.compile(
+    r"\b(wellness|wellbeing|well-being|fitness|retreat|programme|program|spa|"
+    r"longevity|stress|sleep|meditation|yoga|pilates|detox|healthy ageing|"
+    r"healthy aging|wellness programme|wellness experience)\b|"
+    r"عافية|لياقة|منتجع|سبا|يوغا|بيلاتس|تأمل|إجهاد|نوم|رياضي",
+    re.IGNORECASE,
+)
+_FOLLOWUP_CONTEXT_RE = re.compile(
+    r"\b(second|third|another|also|what about|and then|instead|other option|"
+    r"the other)\b|ثان|أيضاً|ماذا عن|بدلاً من|الخيار الآخر",
+    re.IGNORECASE,
+)
+_AMBIGUOUS_HINT_RE = re.compile(
+    r"\b(both|either|not sure|unsure|undecided|don't know|do not know|"
+    r"help me decide|not certain)\b|"
+    r"غير\s+متأكد|لست\s+متأكد|كلاهما|أي\s+منهما|لا\s+أعرف|لا\s+ادري|ساعدني\s+أقرر|"
+    r"(طبية|علاج|جراحة).{0,40}(عافية|لياقة)|(عافية|لياقة).{0,40}(طبية|علاج|جراحة)",
+    re.IGNORECASE,
+)
+_INTENT_DECLARATION_RE = re.compile(
+    r"\b(interested|interest|looking for|want|need|exploring|seeking|would like|"
+    r"i'?m interested|i am interested)\b|"
+    r"أهتم|مهتم|أبحث|أريد|أستكشف|أسعى|أرغب|أحتاج|"
+    r"عايز|أبغى|ابغى|بدّي|محتاج|محتاجة|ودي|وديّة",
+    re.IGNORECASE,
+)
+
 
 class QuestionPlanner:
     """Choose at most one concise question while backend code remains authoritative."""
@@ -53,6 +90,8 @@ class QuestionPlanner:
         category = self._category(conversation)
         consultation_requested = bool(_CONSULTATION_INTENT.search(text))
         question_requested = bool(_QUESTION_INTENT.search(text))
+        _msgs = getattr(conversation, "messages", [])
+        user_turns = sum(1 for m in _msgs if m.role == "user")
 
         # Check if all clinical/wellness details are present
         missing_funnel = self._first_missing(conversation, category, include_contact=False)
@@ -145,7 +184,42 @@ class QuestionPlanner:
                     question_text=self._question_for(field, category),
                     target_field=field,
                 )
-        elif self._has_ambiguous_category(text):
+        elif (
+            self._has_ambiguous_category(text)
+            or _AMBIGUOUS_HINT_RE.search(text)
+            or (
+                self._journey_hint(text)
+                and user_turns <= 1
+                and not _FOLLOWUP_CONTEXT_RE.search(text)
+                and (_INTENT_DECLARATION_RE.search(text) or not question_requested)
+            )
+        ):
+            # Journey hints apply to first-turn intent declarations only;
+            # follow-up/contextual phrasing and pure informational questions
+            # keep the generic clarify/answer behaviour.
+            hint = (
+                self._journey_hint(text)
+                if user_turns <= 1 and not _FOLLOWUP_CONTEXT_RE.search(text)
+                else None
+            )
+            if hint == "medical_treatment":
+                field, label = ("procedure_or_service", "treatment or specialty")
+                return PlannedStep(
+                    "collect_detail",
+                    "Visitor signalled medical travel; collect the treatment detail first.",
+                    question_goal=label,
+                    question_text=self._question_for(field, "medical_treatment"),
+                    target_field=field,
+                )
+            if hint == "wellness":
+                field, label = ("wellness_programme_or_goal", "wellness programme or goal")
+                return PlannedStep(
+                    "collect_detail",
+                    "Visitor signalled general wellness; collect the wellness goal first.",
+                    question_goal=label,
+                    question_text=self._question_for(field, "wellness"),
+                    target_field=field,
+                )
             return PlannedStep(
                 "clarify_category",
                 "The customer has not selected a journey.",
@@ -207,6 +281,9 @@ class QuestionPlanner:
     @staticmethod
     def _category(conversation: Any) -> str | None:
         value = conversation.case_facts.get("customer_category")
+        if isinstance(value, dict):
+            value = value.get("value") or value.get("canonical") or next(
+                (v for v in value.values() if isinstance(v, str)), None)
         if value in {"medical_treatment", "wellness"}:
             return value
         care_category = conversation.case_facts.get("care_category")
@@ -241,6 +318,20 @@ class QuestionPlanner:
     @staticmethod
     def _has_ambiguous_category(text: str) -> bool:
         return bool(re.search(r"\b(medical|wellness|both|either|not sure|undecided)\b", text, re.I))
+
+    @staticmethod
+    def _journey_hint(text: str) -> str | None:
+        """Classify a first-turn message into a journey hint.
+
+        Returns 'medical_treatment', 'wellness', or None when the intent is
+        genuinely ambiguous (both signals present or neither)."""
+        medical = bool(_MEDICAL_HINT_RE.search(text))
+        wellness = bool(_WELLNESS_HINT_RE.search(text))
+        if medical and not wellness:
+            return "medical_treatment"
+        if wellness and not medical:
+            return "wellness"
+        return None
 
     def current_pending_field(self, conversation: Any) -> str | None:
         category = self._category(conversation)

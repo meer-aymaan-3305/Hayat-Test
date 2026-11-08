@@ -1,0 +1,651 @@
+[
+  {
+    "journey": "J01-first-visit",
+    "mode": "text-en",
+    "in": "Hi, I am exploring medical and wellness options. What do you offer?",
+    "reply": "Hello! Wellness is a big part of what we do — I can point you to the right experience once I know your goal. Which wellness programme or goal interests you?",
+    "lang": "en",
+    "state": "collecting_details",
+    "next": "collect_detail",
+    "escalation": false,
+    "sources": [],
+    "handoff": false,
+    "ms": 50.2
+  },
+  {
+    "journey": "J01-first-visit",
+    "mode": "text-ar",
+    "in": "مرحباً، أستكشف خيارات طبية وخيارات عافية. ماذا تقدمون؟",
+    "reply": "مرحباً! مفهوم — أنت مهتم ببرنامج عافية. ما الوجهة التي تفضلها، أم ترغب في المساعدة في استكشاف الوجهات المتاحة؟",
+    "lang": "ar",
+    "state": "collecting_details",
+    "next": "collect_detail",
+    "escalation": false,
+    "sources": [],
+    "handoff": false,
+    "ms": 16.5
+  },
+  {
+    "journey": "J02-medical",
+    "mode": "text-en",
+    "in": "I am interested in travelling for a medical procedure. How can you help?",
+    "reply": "Hello! Medical travel is one of our core services — a coordinator can prepare options once I understand what you need. What treatment or specialty would you like to explore?",
+    "lang": "en",
+    "state": "collecting_details",
+    "next": "collect_detail",
+    "escalation": false,
+    "sources": [],
+    "handoff": false,
+    "ms": 13.8
+  },
+  {
+    "journey": "J02-medical",
+    "mode": "text-ar",
+    "in": "أهتم بالسفر لإجراء عملية طبية. كيف يمكنكم المساعدة؟",
+    "reply": "مرحباً! السفر الطبي من الخدمات الأساسية لدينا — يمكن للمنسق إعداد الخيارات بعد فهم احتياجاتك. ما العلاج أو التخصص الذي ترغب في استكشافه؟",
+    "lang": "ar",
+    "state": "collecting_details",
+    "next": "collect_detail",
+    "escalation": false,
+    "sources": [],
+    "handoff": false,
+    "ms": 15.0
+  },
+  {
+    "journey": "J03-wellness",
+    "mode": "text-en",
+    "in": "I am looking for a wellness experience. What options do you have?",
+    "reply": "Hello! Wellness is a big part of what we do — I can point you to the right experience once I know your goal. Which wellness programme or goal interests you?",
+    "lang": "en",
+    "state": "collecting_details",
+    "next": "collect_detail",
+    "escalation": false,
+    "sources": [],
+    "handoff": false,
+    "ms": 14.7
+  },
+  {
+    "journey": "J03-wellness",
+    "mode": "text-ar",
+    "in": "أبحث عن تجربة عافية. ما الخيارات المتاحة لديكم؟",
+    "reply": "مرحباً! مفهوم — أنت مهتم ببرنامج عافية. ما الوجهة التي تفضلها، أم ترغب في المساعدة في استكشاف الوجهات المتاحة؟",
+    "lang": "ar",
+    "state": "collecting_details",
+    "next": "collect_detail",
+    "escalation": false,
+    "sources": [],
+    "handoff": false,
+    "ms": 14.9
+  },
+  {
+    "journey": "J04-hayat100",
+    "mode": "text-en",
+    "in": "Tell me about HAYAT-100. Does it guarantee I will live to 100?",
+    "reply": "Hello! That sounds like HAYAT-100 would be the programme most relevant to what you're exploring. It's designed around longevity and healthy ageing, with experiences focused on nutrition, movement, healthy lifestyle awareness, rest and recovery.\n\nWhat interests you most about healthy ageing — learning about longevity, improving your lifestyle habits, fitness and mobility, or simply taking time to f",
+    "lang": "en",
+    "state": "signature_programme_enquiry",
+    "next": "explore_programmes",
+    "escalation": false,
+    "sources": [
+      {
+        "document_id": "hayat-100-longevity-v1",
+        "title": "HAYAT-100 Longevity Retreat Guide",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-signature-overview-v1",
+        "title": "Trawellcare Signature Wellness Programmes Overview",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-signature-pricing-v1",
+        "title": "Signature Programmes Pricing and Customisation Policy",
+        "version": "1.0"
+      }
+    ],
+    "handoff": false,
+    "ms": 20.6
+  },
+  {
+    "journey": "J04-hayat100",
+    "mode": "text-ar",
+    "in": "أخبرني عن برنامج HAYAT-100. هل يضمن أن أعيش حتى المئة؟",
+    "reply": "مرحباً! يبدو أن برنامج HAYAT-100 هو البرنامج الأكثر توافقاً مع ما تبحث عنه. تم تصميم هذا البرنامج حول طول العمر والشيخوخة الصحية، مع تجارب مقترحة تركز على التغذية السليمة، والنشاط الحركي، والتوعية بأسلوب الحياة الصحي، والراحة والاستشفاء.\n\nما الذي يثير اهتمامك أكثر في رحلة الشيخوخة الصحية — التوعية بطول العمر، أم تحسين العادات الغذائية، أم اللياقة والحركة، أم تخصيص وقت للراحة والاسترخاء؟",
+    "lang": "ar",
+    "state": "signature_programme_enquiry",
+    "next": "explore_programmes",
+    "escalation": false,
+    "sources": [
+      {
+        "document_id": "hayat-signature-overview-ar-v1",
+        "title": "نظرة عامة على برامج العافية المتميزة - حياة",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-signature-overview-v1",
+        "title": "Trawellcare Signature Wellness Programmes Overview",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-100-longevity-v1",
+        "title": "HAYAT-100 Longevity Retreat Guide",
+        "version": "1.0"
+      }
+    ],
+    "handoff": false,
+    "ms": 12.0
+  },
+  {
+    "journey": "J05-aafiya",
+    "mode": "text-en",
+    "in": "I am a woman interested in fitness and wellness. Tell me about AAfiya.",
+    "reply": "Hello! That sounds like AAfiya would be the experience best suited to what you're looking for. AAfiya is our women-focused fitness and wellness retreat centring on movement, nutrition, self-care, and personal connection in a supportive, pressure-free setting for all fitness levels.\n\nWhat kind of experience interests you most — pilates and yoga, wellness workshops, balanced nutrition, or a quiet re",
+    "lang": "en",
+    "state": "signature_programme_enquiry",
+    "next": "explore_programmes",
+    "escalation": false,
+    "sources": [
+      {
+        "document_id": "hayat-signature-overview-v1",
+        "title": "Trawellcare Signature Wellness Programmes Overview",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-aafiya-women-v1",
+        "title": "AAfiya Women's Retreat Guide",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-signature-overview-ar-v1",
+        "title": "نظرة عامة على برامج العافية المتميزة - حياة",
+        "version": "1.0"
+      }
+    ],
+    "handoff": false,
+    "ms": 14.5
+  },
+  {
+    "journey": "J05-aafiya",
+    "mode": "text-ar",
+    "in": "أنا امرأة مهتمة باللياقة والعافية. أخبرني عن برنامج AAfiya.",
+    "reply": "مرحباً! يبدو أن AAfiya هي التجربة الأنسب لما تبحثين عنه. AAfiya هي تجربة للياقة والعافية مخصصة للسيدات، تجمع بين الحركة، والتغذية السليمة، والعناية الذاتية، والتواصل الإيجابي في بيئة مرحبة وداعمة لجميع المستويات.\n\nما نوع التجارب التي تفضلين التركيز عليها — تمارين البيلاتس واليوغا، أم ورش العمل الصحية، أم التغذية المتوازنة، أم الاسترخاء والاستجمام؟",
+    "lang": "ar",
+    "state": "signature_programme_enquiry",
+    "next": "explore_programmes",
+    "escalation": false,
+    "sources": [
+      {
+        "document_id": "hayat-signature-overview-ar-v1",
+        "title": "نظرة عامة على برامج العافية المتميزة - حياة",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-prep-ar-v1",
+        "title": "دليل التحضير للاستشارة - حياة",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-wellness-ar-v1",
+        "title": "برامج العافية وجودة الحياة - حياة",
+        "version": "1.0"
+      }
+    ],
+    "handoff": false,
+    "ms": 13.7
+  },
+  {
+    "journey": "J06-ffounders",
+    "mode": "text-en",
+    "in": "I am an executive wanting to improve fitness and wellbeing. What is FFounders?",
+    "reply": "Hello! That sounds like FFounders would be the ideal retreat. FFounders is our executive fitness and wellness retreat created for founders, entrepreneurs, and business leaders to reset, build resilience, and optimize recovery alongside fellow leaders.\n\nWhat areas would you most like to focus on — physical strength and conditioning, stress resilience, sleep and recovery science, or curated peer dis",
+    "lang": "en",
+    "state": "signature_programme_enquiry",
+    "next": "explore_programmes",
+    "escalation": false,
+    "sources": [
+      {
+        "document_id": "hayat-signature-overview-v1",
+        "title": "Trawellcare Signature Wellness Programmes Overview",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-ffounders-executive-v1",
+        "title": "FFounders Executive Retreat Guide",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-signature-pricing-v1",
+        "title": "Signature Programmes Pricing and Customisation Policy",
+        "version": "1.0"
+      }
+    ],
+    "handoff": false,
+    "ms": 13.8
+  },
+  {
+    "journey": "J06-ffounders",
+    "mode": "text-ar",
+    "in": "أنا مدير تنفيذي أرغب في تحسين لياقتي وعافيتي. ما هو FFounders؟",
+    "reply": "مرحباً! يبدو أن FFounders هو الخيار المثالي لك. FFounders هو منتجع متميز للياقة والعافية التنفيذية مصمم لمؤسسي الشركات ورواد الأعمال والقادة لإعادة شحن طاقتهم، وبناء المرونة الجسدية والنفسية، والتواصل البنّاء مع أقرانهم من قادة الأعمال.\n\nما الجانب الذي تود إعطاءه الأولوية — اللياقة والقوة البدنية، أم إدارة التوتر والتعافي، أم علوم النوم والأداء، أم النقاشات المثرية مع رواد الأعمال؟",
+    "lang": "ar",
+    "state": "signature_programme_enquiry",
+    "next": "explore_programmes",
+    "escalation": false,
+    "sources": [
+      {
+        "document_id": "hayat-signature-overview-ar-v1",
+        "title": "نظرة عامة على برامج العافية المتميزة - حياة",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-signature-overview-v1",
+        "title": "Trawellcare Signature Wellness Programmes Overview",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-ffounders-executive-v1",
+        "title": "FFounders Executive Retreat Guide",
+        "version": "1.0"
+      }
+    ],
+    "handoff": false,
+    "ms": 14.2
+  },
+  {
+    "journey": "J07-ambiguous",
+    "mode": "text-en",
+    "in": "I want something related to health but I am not sure what.",
+    "reply": "Hello! Would you like help with a medical treatment or a wellness programme?",
+    "lang": "en",
+    "state": "requested",
+    "next": "clarify_category",
+    "escalation": false,
+    "sources": [],
+    "handoff": false,
+    "ms": 14.8
+  },
+  {
+    "journey": "J07-ambiguous",
+    "mode": "text-ar",
+    "in": "أريد شيئاً متعلقاً بالصحة لكنني لست متأكداً مما أريد.",
+    "reply": "مرحباً! هل تود المساعدة في علاج طبي أم في برنامج عافية؟",
+    "lang": "ar",
+    "state": "requested",
+    "next": "clarify_category",
+    "escalation": false,
+    "sources": [],
+    "handoff": false,
+    "ms": 14.4
+  },
+  {
+    "journey": "J08-unsupported",
+    "mode": "text-en",
+    "in": "What is the exact price and confirmed dates of HAYAT-100?",
+    "reply": "Hello! Each of our retreats is individually curated, so there is no fixed package price. Pricing depends on your preferred destination, accommodation, experiences and the level of customisation. Our team can explore a suitable experience and prepare a tailored proposal once we understand your preferences.",
+    "lang": "en",
+    "state": "signature_programme_enquiry",
+    "next": "explore_programmes",
+    "escalation": false,
+    "sources": [
+      {
+        "document_id": "hayat-signature-overview-v1",
+        "title": "Trawellcare Signature Wellness Programmes Overview",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-signature-pricing-v1",
+        "title": "Signature Programmes Pricing and Customisation Policy",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-100-longevity-v1",
+        "title": "HAYAT-100 Longevity Retreat Guide",
+        "version": "1.0"
+      }
+    ],
+    "handoff": false,
+    "ms": 15.1
+  },
+  {
+    "journey": "J08-unsupported",
+    "mode": "text-ar",
+    "in": "ما هو السعر الدقيق والمواعيد المؤكدة لبرنامج HAYAT-100؟",
+    "reply": "مرحباً! يتم تصميم كل منتجع من منتجعاتنا بشكل فردي ومخصص، لذا لا يوجد سعر ثابت للباقة. تعتمد التكلفة على الوجهة المفضلة، ونوع الإقامة، والأنشطة ومستوى التخصيص. يمكن لفريقنا دراسة خيارات مناسبة وإعداد مقترح مخصص بمجرد فهم تفضيلاتك.",
+    "lang": "ar",
+    "state": "signature_programme_enquiry",
+    "next": "explore_programmes",
+    "escalation": false,
+    "sources": [
+      {
+        "document_id": "hayat-signature-overview-v1",
+        "title": "Trawellcare Signature Wellness Programmes Overview",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-signature-pricing-v1",
+        "title": "Signature Programmes Pricing and Customisation Policy",
+        "version": "1.0"
+      },
+      {
+        "document_id": "hayat-100-longevity-v1",
+        "title": "HAYAT-100 Longevity Retreat Guide",
+        "version": "1.0"
+      }
+    ],
+    "handoff": false,
+    "ms": 12.9
+  },
+  {
+    "journey": "J09-provider",
+    "mode": "text-en",
+    "in": "Which hospital and doctor do you recommend? Which country is best?",
+    "reply": "Hello! I don't choose or recommend specific hospitals, doctors, or treatments myself — once you sign up, our matching process and a case manager or wellness curator will put together tailored options for you. I can get your preferences ready for that now.",
+    "lang": "en",
+    "state": "requested",
+    "next": "answer",
+    "escalation": false,
+    "sources": [],
+    "handoff": false,
+    "ms": 12.4
+  },
+  {
+    "journey": "J09-provider",
+    "mode": "text-ar",
+    "in": "أي مستشفى وطبيب تنصحون به؟ وما أفضل دولة؟",
+    "reply": "مرحباً! هل تود المساعدة في علاج طبي أم في برنامج عافية؟",
+    "lang": "ar",
+    "state": "requested",
+    "next": "answer",
+    "escalation": false,
+    "sources": [],
+    "handoff": false,
+    "ms": 21.4
+  },
+  {
+    "journey": "J10-clinical",
+    "mode": "text-en",
+    "in": "I have a condition. Can you diagnose it and recommend treatment?",
+    "reply": "I'm not able to interpret symptoms or give a diagnosis — that needs a clinician. I can note down what kind of care you're looking for, and a doctor or case manager will review the details with you after you sign up. What would you like help with?",
+    "lang": "en",
+    "state": "escalated",
+    "next": "escalate",
+    "escalation": true,
+    "sources": [],
+    "handoff": false,
+    "ms": 12.6
+  },
+  {
+    "journey": "J10-clinical",
+    "mode": "text-ar",
+    "in": "لدي حالة مرضية. هل يمكنكم تشخيصها والتوصية بعلاج؟",
+    "reply": "لست مخولاً بتفسير الأعراض أو تقديم تشخيص طبي — فهذا يتطلب طبيباً مختصاً. يمكنني تسجيل نوع الرعاية التي تبحث عنها، وسيقوم طبيب أو مدير حالة بمراجعة التفاصيل معك بعد التسجيل. بمَ ترغب أن أساعدك؟",
+    "lang": "ar",
+    "state": "escalated",
+    "next": "escalate",
+    "escalation": true,
+    "sources": [],
+    "handoff": false,
+    "ms": 11.7
+  },
+  {
+    "journey": "J11-context",
+    "mode": "text-en",
+    "turns": [
+      {
+        "in": "I need medical travel help.",
+        "reply": "Hello! Medical travel is one of our core services — a coordinator can prepare options once I understand what you need. What treatment or specialty would you like to explore?",
+        "lang": "en",
+        "state": "collecting_details",
+        "next": "collect_detail",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 13.6
+      },
+      {
+        "in": "Cardiology.",
+        "reply": "Understood — you're interested in cardiology treatment. Which destination would you prefer, or would you like help exploring available destinations?",
+        "lang": "en",
+        "state": "collecting_details",
+        "next": "collect_detail",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 42.8
+      },
+      {
+        "in": "India.",
+        "reply": "Understood — you're interested in cardiology treatment. What timeframe would suit you best?",
+        "lang": "en",
+        "state": "collecting_details",
+        "next": "collect_detail",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 13.2
+      },
+      {
+        "in": "Next three months.",
+        "reply": "Understood — you're interested in cardiology treatment. Would you like to request a consultation with a coordinator using these details?",
+        "lang": "en",
+        "state": "offering_consultation",
+        "next": "offer_consultation",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 15.2
+      }
+    ]
+  },
+  {
+    "journey": "J11-context",
+    "mode": "text-ar",
+    "turns": [
+      {
+        "in": "أحتاج مساعدة في السفر الطبي.",
+        "reply": "مرحباً! السفر الطبي من الخدمات الأساسية لدينا — يمكن للمنسق إعداد الخيارات بعد فهم احتياجاتك. ما العلاج أو التخصص الذي ترغب في استكشافه؟",
+        "lang": "ar",
+        "state": "collecting_details",
+        "next": "collect_detail",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 13.5
+      },
+      {
+        "in": "قسطرة قلب.",
+        "reply": "مفهوم — أنت مهتم بعلاج قسطرة. ما الوجهة التي تفضلها، أم ترغب في المساعدة في استكشاف الوجهات المتاحة؟",
+        "lang": "ar",
+        "state": "collecting_details",
+        "next": "collect_detail",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 13.4
+      },
+      {
+        "in": "الهند.",
+        "reply": "مفهوم — أنت مهتم بعلاج قسطرة. ما الإطار الزمني الأنسب لك؟",
+        "lang": "ar",
+        "state": "collecting_details",
+        "next": "collect_detail",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 12.1
+      },
+      {
+        "in": "خلال ثلاثة أشهر.",
+        "reply": "مفهوم — أنت مهتم بعلاج قسطرة. هل ترغب في طلب استشارة مع منسق بناءً على هذه التفاصيل؟",
+        "lang": "ar",
+        "state": "offering_consultation",
+        "next": "offer_consultation",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 16.4
+      }
+    ]
+  },
+  {
+    "journey": "J12-consent-refuse",
+    "mode": "text-en",
+    "turns": [
+      {
+        "in": "I want a consultation about dental treatment abroad.",
+        "reply": "Hello! Understood — you're interested in dental treatment. Which destination would you prefer, or would you like help exploring available destinations?",
+        "lang": "en",
+        "state": "collecting_details",
+        "next": "collect_detail",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 14.8
+      },
+      {
+        "in": "Turkey.",
+        "reply": "Understood — you're interested in dental treatment. What timeframe would suit you best?",
+        "lang": "en",
+        "state": "collecting_details",
+        "next": "collect_detail",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 13.5
+      },
+      {
+        "in": "Next month.",
+        "reply": "Understood — you're interested in dental treatment. Would you like to request a consultation with a coordinator using these details?",
+        "lang": "en",
+        "state": "offering_consultation",
+        "next": "offer_consultation",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 14.8
+      },
+      {
+        "in": "Budget is flexible.",
+        "reply": "To take this further, please sign in or create a free account. This chat will move to your account, so you won't need to repeat anything.",
+        "lang": "en",
+        "state": "offering_consultation",
+        "next": "sign_in_required",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 14.0
+      },
+      {
+        "in": "Video consultation please.",
+        "reply": "Understood — you're interested in dental treatment.",
+        "lang": "en",
+        "state": "offering_consultation",
+        "next": "sign_in_required",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 13.6
+      },
+      {
+        "in": "No, I do not consent to sharing my details.",
+        "reply": "To take this further, please sign in or create a free account. This chat will move to your account, so you won't need to repeat anything.",
+        "lang": "en",
+        "state": "offering_consultation",
+        "next": "sign_in_required",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 14.3
+      }
+    ]
+  },
+  {
+    "journey": "J13-consent-approve",
+    "mode": "text-en",
+    "turns": [
+      {
+        "in": "I want a consultation about dental treatment abroad.",
+        "reply": "Hello! Understood — you're interested in dental treatment. Which destination would you prefer, or would you like help exploring available destinations?",
+        "lang": "en",
+        "state": "collecting_details",
+        "next": "collect_detail",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 14.8
+      },
+      {
+        "in": "Turkey.",
+        "reply": "Understood — you're interested in dental treatment. What timeframe would suit you best?",
+        "lang": "en",
+        "state": "collecting_details",
+        "next": "collect_detail",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 12.0
+      },
+      {
+        "in": "Next month.",
+        "reply": "Understood — you're interested in dental treatment. Would you like to request a consultation with a coordinator using these details?",
+        "lang": "en",
+        "state": "offering_consultation",
+        "next": "offer_consultation",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 13.8
+      },
+      {
+        "in": "Budget is flexible.",
+        "reply": "To take this further, please sign in or create a free account. This chat will move to your account, so you won't need to repeat anything.",
+        "lang": "en",
+        "state": "offering_consultation",
+        "next": "sign_in_required",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 13.7
+      },
+      {
+        "in": "Video consultation please.",
+        "reply": "Understood — you're interested in dental treatment.",
+        "lang": "en",
+        "state": "offering_consultation",
+        "next": "sign_in_required",
+        "escalation": false,
+        "sources": [],
+        "handoff": false,
+        "ms": 14.5
+      },
+      {
+        "in": "Yes, I confirm. Please share my summary.",
+        "reply": "To take this further, please sign in or create a free account. This chat will move to your account, so you won't need to repeat anything.",
+        "lang": "en",
+        "state": "awaiting_consent",
+        "next": "sign_in_required",
+        "escalation": false,
+        "sources": [],
+        "handoff": true,
+        "ms": 14.7
+      }
+    ]
+  },
+  {
+    "journey": "V-stt-nonspeech",
+    "mode": "voice-en",
+    "status": 200,
+    "ms": 306.2,
+    "body": {
+      "conversation_id": "65a0b9a3-47b8-4268-87ed-dbe7be93dc3a",
+      "transcript": "you",
+      "detected_language": "English",
+      "reply": "Hello! Would you like help with a medical treatment or a wellness programme?",
+      "language": "en",
+      "escalation_required": false,
+      "suggested_actions": [],
+      "conversation_state": "requested",
+      "message_id": "47e3c34b-118e-4780-ac00-929054570c51"
+    }
+  }
+]

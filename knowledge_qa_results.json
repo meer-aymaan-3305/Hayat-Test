@@ -1,0 +1,155 @@
+[
+  {
+    "test": "T1a",
+    "name": "TXT upload",
+    "input": "policy.txt",
+    "expected": "200 indexed",
+    "actual": "200 indexed",
+    "verdict": "PASS",
+    "evidence": "{\"document_id\":\"doc-4bc5050b9f95\",\"filename\":\"policy.txt\",\"title\":\"Cedar Policy\",\"version\":\"1\",\"status\":\"indexed\",\"chunk_count\":1,\"error\":null}"
+  },
+  {
+    "test": "T1b",
+    "name": "PDF upload",
+    "input": "policy.pdf",
+    "expected": "200 indexed or failed-safely",
+    "actual": "200 indexed",
+    "verdict": "PASS",
+    "evidence": "{\"document_id\":\"doc-8619adaed8a1\",\"filename\":\"policy.pdf\",\"title\":\"Cedar PDF\",\"version\":\"1\",\"status\":\"indexed\",\"chunk_count\":1,\"error\":null}"
+  },
+  {
+    "test": "T1c",
+    "name": "DOCX upload",
+    "input": "policy.docx",
+    "expected": "200 indexed",
+    "actual": "200 indexed",
+    "verdict": "PASS",
+    "evidence": "{\"document_id\":\"doc-6eb55ce38dc8\",\"filename\":\"policy.docx\",\"title\":\"Cedar DOCX\",\"version\":\"1\",\"status\":\"indexed\",\"chunk_count\":1,\"error\":null}"
+  },
+  {
+    "test": "T1d",
+    "name": "metadata",
+    "input": "GET documents",
+    "expected": "all listed with ids/versions",
+    "actual": "3 docs",
+    "verdict": "PASS",
+    "evidence": "[{\"document_id\": \"doc-4bc5050b9f95\", \"filename\": \"policy.txt\", \"title\": \"Cedar Policy\", \"version\": \"1\", \"status\": \"indexed\", \"chunk_count\": 1, \"error\": null, \"uploaded_at\": \"2026-11-08T14:05:39.486659+00:00\"}, {\"document_id\": \"doc-8619adaed8a1\", \"filename\": \"policy.pdf\", \"title\": \"Cedar PDF\", \"versi"
+  },
+  {
+    "test": "T2a",
+    "name": "grounded query",
+    "input": "coordinator on duty?",
+    "expected": "reply may be generic; sources should attribute if grounded",
+    "actual": "reply='Hello! We have three signature wellness experiences, each designed around a different aspect of wellbeing.\\n\\nHAYAT-100 fo' sources=[{'document_id': 'doc-4bc5050b9f95', 'title': 'Cedar Policy', 'version': '1'}, {'document_id': 'hayat-signature-overview-v1', 'title': 'Trawellcare Signature Wellness Programmes Overview', 'version': '1.0'}, {'document_id': 'hayat-signature-overview-ar-v1', 'ti",
+    "verdict": "PASS",
+    "evidence": "{\"reply\": \"Hello! We have three signature wellness experiences, each designed around a different aspect of wellbeing.\\n\\nHAYAT-100 focuses on longevity and healthy ageing.\\n\\nAAfiya is a women's fitness and wellness\", \"sources\": [{\"document_id\": \"doc-4bc5050b9f95\", \"title\": \"Cedar Policy\", \"version\": \"1\"}, {\"document_id\": \"hayat-signature-overview-v1\", \"title\": \"Trawellcare Signature Wellness Prog"
+  },
+  {
+    "test": "T2b",
+    "name": "unsupported query",
+    "input": "wifi password?",
+    "expected": "no fabrication",
+    "actual": "I won't need that, and please don't share passwords, card numbers, or ID numbers here — this chat isn't a secure place for that. Let's continue with p",
+    "verdict": "PASS",
+    "evidence": "I won't need that, and please don't share passwords, card numbers, or ID numbers here — this chat isn't a secure place for that. Let's continue with planning your care or travel; sign-in and payment h"
+  },
+  {
+    "test": "T3a",
+    "name": "version increment",
+    "input": "re-upload same title+new content",
+    "expected": "version 2 indexed",
+    "actual": "version=1 status=indexed",
+    "verdict": "PASS",
+    "evidence": "{\"document_id\":\"doc-e97002a23e7e\",\"filename\":\"policy.txt\",\"title\":\"Cedar Policy\",\"version\":\"1\",\"status\":\"indexed\",\"chunk_count\":1,\"error\":null}"
+  },
+  {
+    "test": "T4",
+    "name": "dedup identical",
+    "input": "same bytes+title",
+    "expected": "no duplicate chunks; version bump or dedup",
+    "actual": "doc_id=doc-4bc5050b9f95 version=2 chunks=1",
+    "verdict": "PASS",
+    "evidence": "{\"document_id\":\"doc-4bc5050b9f95\",\"filename\":\"dup.txt\",\"title\":\"Cedar Policy\",\"version\":\"2\",\"status\":\"indexed\",\"chunk_count\":1,\"error\":null}"
+  },
+  {
+    "test": "T4b",
+    "name": "no dup index entries",
+    "input": "GET",
+    "expected": "single Cedar Policy doc",
+    "actual": "2 entries",
+    "verdict": "FAIL",
+    "evidence": "['Cedar Policy', 'Cedar PDF', 'Cedar DOCX', 'Cedar Policy']"
+  },
+  {
+    "test": "T5a",
+    "name": "delete",
+    "input": "DELETE doc-4bc5050b9f95",
+    "expected": "200 deleted",
+    "actual": "200 {'document_id': 'doc-4bc5050b9f95', 'status': 'deleted'}",
+    "verdict": "PASS",
+    "evidence": "{\"document_id\":\"doc-4bc5050b9f95\",\"status\":\"deleted\"}"
+  },
+  {
+    "test": "T5b",
+    "name": "delete again",
+    "input": "DELETE same",
+    "expected": "404",
+    "actual": "404",
+    "verdict": "PASS",
+    "evidence": ""
+  },
+  {
+    "test": "T5c",
+    "name": "files cleaned",
+    "input": "glob",
+    "expected": "0 files",
+    "actual": "0 remain",
+    "verdict": "PASS",
+    "evidence": "before=2"
+  },
+  {
+    "test": "T5d",
+    "name": "others remain",
+    "input": "GET",
+    "expected": "other docs intact",
+    "actual": "3 docs",
+    "verdict": "PASS",
+    "evidence": "['Cedar PDF', 'Cedar DOCX', 'Cedar Policy']"
+  },
+  {
+    "test": "T6a",
+    "name": "corrupt pdf",
+    "input": "bad.pdf",
+    "expected": "failed status or 422, no crash",
+    "actual": "200 failed",
+    "verdict": "PASS",
+    "evidence": "{\"document_id\":\"doc-0959a923a1e3\",\"filename\":\"bad.pdf\",\"title\":\"Bad\",\"version\":\"1\",\"status\":\"failed\",\"chunk_count\":0,\"error\":\"Could not extract text: Stream has ended unexpectedly\"}"
+  },
+  {
+    "test": "T6b",
+    "name": "unsupported type",
+    "input": "evil.exe",
+    "expected": "4xx rejected",
+    "actual": "422",
+    "verdict": "PASS",
+    "evidence": ""
+  },
+  {
+    "test": "T6c",
+    "name": "empty doc",
+    "input": "empty.txt",
+    "expected": "failed status, no crash",
+    "actual": "422 ?",
+    "verdict": "PASS",
+    "evidence": "{\"detail\":\"Empty file.\"}"
+  },
+  {
+    "test": "T6d",
+    "name": "oversized",
+    "input": "big.txt 1MB+",
+    "expected": "4xx rejected",
+    "actual": "422",
+    "verdict": "PASS",
+    "evidence": ""
+  }
+]

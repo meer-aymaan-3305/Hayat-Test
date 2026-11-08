@@ -243,7 +243,8 @@ def test_coordinator_assignment_and_progress_workflow():
         "role": "case_manager",
         "notes": "Assigned for cardiology intake coordination.",
     }
-    r_assign = client.post(f"/v1/coordinator/handoffs/{handoff.id}/assign", json=assign_payload)
+    coord_headers = {"X-Coordinator-ID": "coord_lead_1", "X-Coordinator-Role": "lead_coordinator"}
+    r_assign = client.post(f"/v1/coordinator/handoffs/{handoff.id}/assign", headers=coord_headers, json=assign_payload)
     assert r_assign.status_code == 200
     assert r_assign.json()["status"] == HandoffStatus.COORDINATOR_ASSIGNED
     assert r_assign.json()["assigned_coordinator_id"] == "coord_404"
@@ -256,7 +257,7 @@ def test_coordinator_assignment_and_progress_workflow():
     }
     r_prog = client.post(
         f"/v1/coordinator/handoffs/{handoff.id}/progress",
-        headers={"X-Coordinator-ID": "coord_404"},
+        headers={"X-Coordinator-ID": "coord_404", "X-Coordinator-Role": "case_manager"},
         json=prog_payload,
     )
     assert r_prog.status_code == 200
@@ -276,9 +277,30 @@ def test_human_appointment_confirmation_enforces_coordinator_credentials():
     # Autonomous confirmation attempt via progress endpoint must fail
     bad_prog = client.post(
         f"/v1/coordinator/handoffs/{handoff.id}/progress",
+        headers={"X-Coordinator-ID": "coord_99", "X-Coordinator-Role": "case_manager"},
         json={"status": "appointment_confirmed"},
     )
     assert bad_prog.status_code == 400
+
+    # Coordinator endpoints reject callers without an asserted identity
+    assert client.get(f"/v1/coordinator/handoffs/{handoff.id}").status_code == 401
+    assert client.post(
+        f"/v1/coordinator/handoffs/{handoff.id}/confirm-appointment",
+        json={"coordinator_id": "coord_99", "coordinator_name": "Marcus Vance",
+              "appointment_time": "2026-11-20 14:00 UTC", "provider_or_clinic": "Clinic"},
+    ).status_code == 401
+    # A mismatched asserted identity cannot confirm as another coordinator
+    assert client.post(
+        f"/v1/coordinator/handoffs/{handoff.id}/confirm-appointment",
+        headers={"X-Coordinator-ID": "coord_42", "X-Coordinator-Role": "case_manager"},
+        json={
+            "coordinator_id": "coord_99",
+            "coordinator_name": "Marcus Vance",
+            "appointment_time": "2026-11-20 14:00 UTC",
+            "provider_or_clinic": "Istanbul Dental Excellence Center",
+            "mode": "video_consultation",
+        },
+    ).status_code == 403
 
     # Human confirmation with coordinator credentials succeeds
     confirm_payload = {
@@ -289,7 +311,11 @@ def test_human_appointment_confirmation_enforces_coordinator_credentials():
         "mode": "video_consultation",
         "notes": "Initial video consultation with lead surgeon confirmed.",
     }
-    r_conf = client.post(f"/v1/coordinator/handoffs/{handoff.id}/confirm-appointment", json=confirm_payload)
+    r_conf = client.post(
+        f"/v1/coordinator/handoffs/{handoff.id}/confirm-appointment",
+        headers={"X-Coordinator-ID": "coord_99", "X-Coordinator-Role": "case_manager"},
+        json=confirm_payload,
+    )
     assert r_conf.status_code == 200
     data = r_conf.json()
     assert data["status"] == HandoffStatus.APPOINTMENT_CONFIRMED
