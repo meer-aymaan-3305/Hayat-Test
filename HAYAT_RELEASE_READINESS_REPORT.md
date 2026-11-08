@@ -2,8 +2,14 @@
 
 Date: 2026-11-08 · Branch `launch-v1` · HEAD `e989226`+audit fixes (unpushed)
 
-## Verdict: **CONDITIONAL GO** for frontend integration on staging;
-**NO-GO for production** until the external blockers below clear.
+## Verdict: **GO for staging integration** (text chat, knowledge,
+handoff, guardrails); **NO-GO for production** until blockers clear.
+Voice TTS specifically remains blocked on Groq terms acceptance —
+staging may proceed with text-only or scripted voice fallback.
+
+Re-verification 2026-11-08: Orpheus terms still NOT accepted
+(`model_terms_required` re-confirmed live); BFF repo not in workspace —
+live BFF→Hayat request still unverified; suite re-run: 274/274 pass.
 
 ## 1. Git verification
 - Branch `launch-v1` confirmed; `e989226` present.
