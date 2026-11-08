@@ -246,6 +246,8 @@ def create_app(
                 # Website visitors get scripted replies until the AI passes
                 # safety testing. See docs/HAYAT_POLICY_REGISTER.md.
                 use_ai=x_visitor is None or settings.medical_ai_replies,
+                # While the AI is off, shadow mode logs what it would have said.
+                shadow_ai=settings.medical_ai_shadow,
             )
         except Exception as exc:
             # UH-6 & EF-8: Integration or database failure during turn

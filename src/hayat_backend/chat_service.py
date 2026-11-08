@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections import deque
 from dataclasses import replace
+import logging
 import re
+import time
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -31,6 +35,13 @@ from .schemas.appendix_a import AppendixAIntakePayload, PERMITTED_FIELD_NAMES
 from .crm_client import CRMWebhookClient
 from .coordinator_service import CoordinatorHandoffService
 from .programme_service import ARABIC_LABELS, SIGN_IN_REPLY_AR, SIGN_IN_REPLY_EN, ProgrammeConversationService, sign_in_action
+
+
+shadow_logger = logging.getLogger("hayat.shadow")
+
+# Shadow mode asks the AI a question for every website turn, so it is capped to
+# leave room for real use under the provider's rate limits.
+SHADOW_CALLS_PER_MINUTE = 20
 
 
 def _opening(language: str) -> str:
@@ -126,6 +137,8 @@ class ChatService:
             else CoordinatorHandoffService(self.store)
         )
         self.programme_service = ProgrammeConversationService(self.store)
+        self._shadow_calls: deque[float] = deque()
+        self._shadow_tasks: set[asyncio.Task[None]] = set()
 
     def initial_actions(self, language: str) -> list[ChatAction]:
         return [
@@ -154,6 +167,7 @@ class ChatService:
         contactable: bool = False,
         reply_language: str | None = None,
         use_ai: bool = True,
+        shadow_ai: bool = False,
     ) -> dict[str, object]:
         language = reply_language or detect_language(text)
         cached = self.store.cached_chat(conversation.id, client_message_id)
@@ -638,14 +652,15 @@ class ChatService:
             )
             if knowledge:
                 system += f"\nApproved evidence:\n{knowledge}"
+            model_messages = [
+                {"role": "system", "content": system},
+                *prior_history,
+                {"role": "user", "content": redact_message(text)},
+            ]
+            if shadow_ai and not use_ai:
+                self._start_shadow(conversation.id, model_messages, language)
             try:
-                generated = None if not use_ai else await self.model.complete(
-                    [
-                        {"role": "system", "content": system},
-                        *prior_history,
-                        {"role": "user", "content": redact_message(text)},
-                    ]
-                )
+                generated = None if not use_ai else await self.model.complete(model_messages)
                 reply = validate_output(generated, language) if generated else None
             except (LLMError, TypeError, ValueError):
                 reply = None
@@ -1378,6 +1393,46 @@ class ChatService:
                 f"إذا كنت ترغب في تعديل أو تغيير أي معلومة، يمكنك إخباري مباشرة (مثل: 'تغيير الوجهة إلى ألمانيا'). "
                 f"وعندما تكون مستعداً، يرجى تأكيد موافقتك على مشاركة هذه التفضيلات مع فريق التنسيق في ترافيل كير ليتمكن منسق مختص من متابعة طلبك."
             )
+
+    def _start_shadow(self, conversation_id: UUID, messages: list[dict[str, str]], language: str) -> None:
+        """Ask the AI what it would have said, beside the scripted reply, and only log it.
+
+        It runs in the background so the visitor's reply is never slower, and it
+        stops at SHADOW_CALLS_PER_MINUTE.
+        """
+        now = time.monotonic()
+        while self._shadow_calls and now - self._shadow_calls[0] > 60:
+            self._shadow_calls.popleft()
+        if len(self._shadow_calls) >= SHADOW_CALLS_PER_MINUTE:
+            return
+        self._shadow_calls.append(now)
+        task = asyncio.create_task(self._shadow_check(conversation_id, messages, language))
+        self._shadow_tasks.add(task)
+        task.add_done_callback(self._shadow_tasks.discard)
+
+    async def _shadow_check(self, conversation_id: UUID, messages: list[dict[str, str]], language: str) -> None:
+        # Nothing here may reach the visitor, so any failure is only logged.
+        try:
+            generated = await self.model.complete(messages)
+            checked = validate_output(generated, language) if generated else None
+        except Exception as exc:
+            shadow_logger.info("shadow_ai conversation=%s outcome=model_error error=%s", conversation_id, type(exc).__name__)
+            return
+        if not checked:
+            outcome = "no_reply"
+        elif checked.strip() != generated.strip():
+            outcome = "blocked_or_edited"
+        else:
+            outcome = "passed"
+        # The visitor's words are not logged: read them in the admin dashboard.
+        shadow_logger.info(
+            "shadow_ai conversation=%s language=%s outcome=%s ai_reply=%r",
+            conversation_id, language, outcome, redact_message(generated or "")[:600],
+        )
+
+    async def wait_for_shadow(self) -> None:
+        """Lets any shadow calls finish. For tests and clean shutdown."""
+        await asyncio.gather(*self._shadow_tasks, return_exceptions=True)
 
     def _suggestions(self, language: str, conversation: Conversation, decision, plan) -> list[ChatAction]:
         if plan.decision_type == "sign_in_required":

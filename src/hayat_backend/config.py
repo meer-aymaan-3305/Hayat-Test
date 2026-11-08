@@ -36,6 +36,7 @@ class Settings(BaseModel):
     firebase_service_account_json: SecretStr | None = None
     policy_addendum_1_1_approved: bool = False
     medical_ai_replies: bool = False
+    medical_ai_shadow: bool = False
     trawellcare_crm_webhook_url: str | None = None
 
     @property
@@ -101,6 +102,7 @@ def load_settings() -> Settings:
             firebase_service_account_json=values.get("FIREBASE_SERVICE_ACCOUNT_JSON"),
             policy_addendum_1_1_approved=values.get("POLICY_ADDENDUM_1_1_APPROVED", "false").lower() in ("true", "1", "yes"),
             medical_ai_replies=values.get("MEDICAL_AI_REPLIES", "false").lower() in ("true", "1", "yes"),
+            medical_ai_shadow=values.get("MEDICAL_AI_SHADOW", "false").lower() in ("true", "1", "yes"),
             trawellcare_crm_webhook_url=values.get("TRAWELLCARE_CRM_WEBHOOK_URL"),
         )
         settings.validate_integrations()
