@@ -9,7 +9,9 @@ from datetime import UTC, datetime
 from time import perf_counter
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -63,6 +65,8 @@ from .policy_engine import EF_SCRIPTS_EN, EF_SCRIPTS_AR
 from .programme_service import assign_reference_code, registration_reply
 from .service_auth import DOCS_PATHS, OPEN_PATHS, is_service_token
 from .audit_logging import global_audit_store
+from .knowledge import KnowledgeStore, DocumentIngestionError
+from .speech import SpeechError, create_stt, create_tts
 
 logger = logging.getLogger("hayat")
 
@@ -110,6 +114,12 @@ def create_app(
     else:
         chat_service = ChatService(store, create_chat_model(settings))
     coordinator_service = CoordinatorHandoffService(store, settings=settings)
+    knowledge_store = KnowledgeStore(settings.knowledge_dir)
+    stt = create_stt(settings)
+    tts = create_tts(settings)
+    # Index previously uploaded approved-knowledge documents at startup.
+    if hasattr(chat_service.retriever, "replace_uploaded"):
+        chat_service.retriever.replace_uploaded(knowledge_store.indexed_chunks())
     if otp_provider is not None:
         otp = otp_provider
     elif settings.firebase_api_key:
@@ -738,6 +748,190 @@ def create_app(
             summary_text=registration_reply(enquiry, store.get_session(x_session_id).locale),
             coordinator_assigned=False,
         )
+
+    # =========================================================================
+    # Approved company-knowledge document ingestion (BFF/service-token only)
+    # =========================================================================
+
+    @app.post("/v1/knowledge/documents", tags=["knowledge"])
+    async def upload_knowledge_document(
+        file: "UploadFile" = File(...),
+        title: str | None = Form(default=None),
+    ):
+        """Ingest an approved company knowledge document (PDF/DOCX/TXT).
+
+        Company knowledge only — visitor/clinical documents must never be
+        uploaded here. Returns the document record and indexing status.
+        """
+        data = await file.read()
+        try:
+            record, chunks = knowledge_store.ingest(
+                file.filename or "document",
+                data,
+                max_bytes=settings.max_upload_mb * 1024 * 1024,
+                title=title,
+            )
+        except DocumentIngestionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if record.status == "indexed":
+            chat_service.retriever.replace_uploaded(knowledge_store.indexed_chunks())
+        return {
+            "document_id": record.document_id,
+            "filename": record.filename,
+            "title": record.title,
+            "version": record.version,
+            "status": record.status,
+            "chunk_count": record.chunk_count,
+            "error": record.error,
+        }
+
+    @app.get("/v1/knowledge/documents", tags=["knowledge"])
+    async def list_knowledge_documents():
+        return [
+            {
+                "document_id": d.document_id,
+                "filename": d.filename,
+                "title": d.title,
+                "version": d.version,
+                "status": d.status,
+                "chunk_count": d.chunk_count,
+                "error": d.error,
+                "uploaded_at": d.uploaded_at,
+            }
+            for d in knowledge_store.list_documents()
+        ]
+
+    # =========================================================================
+    # Voice: speech-to-text chat and validated-reply text-to-speech
+    # =========================================================================
+
+    @app.post("/v1/voice/chat", tags=["voice"])
+    async def voice_chat(
+        file: "UploadFile" = File(...),
+        conversation_id: UUID = Form(...),
+        x_session_id: UUID = Header(..., alias="X-Session-ID"),
+        x_session_token: str = Header(..., alias="X-Session-Token"),
+        x_visitor: Literal["guest", "customer"] | None = Header(default=None, alias="X-Visitor"),
+        x_contact_consent: bool = Header(default=False, alias="X-Contact-Consent"),
+        x_reply_language: Literal["en", "ar"] | None = Header(default=None, alias="X-Reply-Language"),
+    ):
+        """Transcribe visitor audio (EN/AR) and run it through the standard
+        ChatService pipeline — all guardrails, fact extraction and policy
+        rules apply exactly as for typed messages."""
+        try:
+            store.authorize(x_session_id, x_session_token)
+            conversation = store.get_conversation(x_session_id, conversation_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
+        audio = await file.read()
+        if not audio:
+            raise HTTPException(status_code=400, detail="Empty audio file.")
+        if len(audio) > settings.max_upload_mb * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Audio file too large.")
+        try:
+            transcript, detected = await stt.transcribe(
+                audio, file.filename or "audio", file.content_type or "application/octet-stream"
+            )
+        except SpeechError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        result = await chat_service.respond(
+            conversation,
+            transcript,
+            visitor=x_visitor,
+            contactable=x_contact_consent and settings.policy_addendum_1_1_approved,
+            reply_language=x_reply_language,
+            use_ai=(
+                settings.medical_ai_replies
+                or (x_visitor is None and settings.app_env in {"development", "test"})
+            ),
+            shadow_ai=settings.medical_ai_shadow,
+        )
+        payload = {
+            "conversation_id": conversation.id,
+            "transcript": transcript,
+            "detected_language": detected,
+            "reply": result["assistant_message"].content,
+            "language": result["language"],
+            "escalation_required": result["escalation_required"],
+            "suggested_actions": result["suggested_actions"],
+            "conversation_state": result["conversation_state"],
+            "message_id": str(result["assistant_message"].id),
+        }
+        return payload
+
+    @app.post("/v1/voice/synthesize", tags=["voice"])
+    async def voice_synthesize(
+        payload: dict,
+        x_session_id: UUID = Header(..., alias="X-Session-ID"),
+        x_session_token: str = Header(..., alias="X-Session-Token"),
+    ):
+        """Convert a stored, already-validated assistant reply to speech.
+
+        Only text that exists as an assistant message in the caller's own
+        conversation may be synthesized — arbitrary or unvalidated text is
+        never read aloud.
+        """
+        try:
+            conversation_id = UUID(str(payload.get("conversation_id")))
+            message_id = UUID(str(payload.get("message_id")))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise HTTPException(status_code=400, detail="conversation_id and message_id are required.") from exc
+        try:
+            store.authorize(x_session_id, x_session_token)
+            conversation = store.get_conversation(x_session_id, conversation_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
+        message = next(
+            (m for m in conversation.messages if m.id == message_id and m.role == "assistant"),
+            None,
+        )
+        if not message:
+            raise HTTPException(status_code=404, detail="Assistant message not found.")
+        try:
+            audio, media_type = await tts.synthesize(message.content, message.language or "en")
+        except SpeechError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        from fastapi.responses import Response
+
+        return Response(content=audio, media_type=media_type)
+
+    # =========================================================================
+    # Visitor attachments — DISABLED until compliance approval (Addendum 1.1).
+    # Architecture is in place; the endpoint fails closed while
+    # VISITOR_ATTACHMENTS_ENABLED=false. Clinical documents are never accepted.
+    # =========================================================================
+
+    @app.post("/v1/conversations/{conversation_id}/attachments", tags=["attachments"])
+    async def upload_visitor_attachment(
+        conversation_id: UUID,
+        file: "UploadFile" = File(...),
+        x_session_id: UUID = Header(..., alias="X-Session-ID"),
+        x_session_token: str = Header(..., alias="X-Session-Token"),
+    ):
+        if not settings.visitor_attachments_enabled:
+            raise HTTPException(
+                status_code=403,
+                detail="Visitor document uploads are disabled pending compliance approval.",
+            )
+        try:
+            store.authorize(x_session_id, x_session_token)
+            conversation = store.get_conversation(x_session_id, conversation_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
+        data = await file.read()
+        ext = Path(file.filename or "").suffix.lower()
+        if ext not in {".txt", ".pdf", ".docx"} or len(data) > settings.max_upload_mb * 1024 * 1024:
+            raise HTTPException(status_code=422, detail="Unsupported or oversized attachment.")
+        target_dir = Path(settings.attachments_dir) / str(conversation.session_id)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"{uuid4().hex[:12]}{ext}"
+        target.write_bytes(data)
+        return {
+            "attachment_id": target.stem,
+            "filename": Path(file.filename or "").name,
+            "status": "stored",
+            "note": "Attachments are session-scoped and are never transmitted to CRM or indexed as company knowledge.",
+        }
 
     return app
 

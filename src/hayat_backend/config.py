@@ -41,6 +41,15 @@ class Settings(BaseModel):
     medical_ai_replies: bool = False
     medical_ai_shadow: bool = False
     trawellcare_crm_webhook_url: str | None = None
+    knowledge_dir: str = "data/knowledge"
+    attachments_dir: str = "data/attachments"
+    visitor_attachments_enabled: bool = False
+    max_upload_mb: int = Field(default=10, ge=1, le=50)
+    groq_stt_model: str = "whisper-large-v3"
+    groq_stt_language: str | None = None
+    groq_tts_model: str = "playai-tts"
+    groq_tts_voice_en: str = "Arista-PlayAI"
+    groq_tts_voice_ar: str = "Hala-PlayAI"
 
     @property
     def missing_integrations(self) -> list[str]:
@@ -110,6 +119,15 @@ def load_settings() -> Settings:
             medical_ai_replies=values.get("MEDICAL_AI_REPLIES", "false").lower() in ("true", "1", "yes"),
             medical_ai_shadow=values.get("MEDICAL_AI_SHADOW", "false").lower() in ("true", "1", "yes"),
             trawellcare_crm_webhook_url=values.get("TRAWELLCARE_CRM_WEBHOOK_URL"),
+            knowledge_dir=values.get("KNOWLEDGE_DIR", "data/knowledge"),
+            attachments_dir=values.get("ATTACHMENTS_DIR", "data/attachments"),
+            visitor_attachments_enabled=values.get("VISITOR_ATTACHMENTS_ENABLED", "false").lower() in ("true", "1", "yes"),
+            max_upload_mb=values.get("MAX_UPLOAD_MB", 10),
+            groq_stt_model=values.get("GROQ_STT_MODEL", "whisper-large-v3"),
+            groq_stt_language=values.get("GROQ_STT_LANGUAGE") or None,
+            groq_tts_model=values.get("GROQ_TTS_MODEL", "playai-tts"),
+            groq_tts_voice_en=values.get("GROQ_TTS_VOICE_EN", "Arista-PlayAI"),
+            groq_tts_voice_ar=values.get("GROQ_TTS_VOICE_AR", "Hala-PlayAI"),
         )
         settings.validate_integrations()
         return settings

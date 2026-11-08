@@ -249,6 +249,17 @@ class InMemoryRetriever:
     def __init__(self, chunks: list[KnowledgeChunk] | None = None) -> None:
         self._chunks = list(chunks) if chunks is not None else list(DEFAULT_APPROVED_KNOWLEDGE)
 
+    def replace_uploaded(self, chunks: list[KnowledgeChunk]) -> None:
+        """Swap in re-indexed approved-knowledge chunks (built-in defaults stay)."""
+        self._chunks = [
+            c for c in self._chunks
+            if not c.source.document_id.startswith("doc-")
+        ] + list(chunks)
+
+    def add_chunks(self, chunks: list[KnowledgeChunk]) -> None:
+        """Add newly indexed approved-knowledge chunks."""
+        self._chunks.extend(chunks)
+
     async def retrieve(self, query: str, limit: int = 3) -> list[KnowledgeChunk]:
         stopwords = {
             "a", "an", "the", "and", "or", "in", "on", "at", "to", "for", "of", "with",
