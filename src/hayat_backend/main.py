@@ -763,12 +763,13 @@ def create_app(
         Company knowledge only — visitor/clinical documents must never be
         uploaded here. Returns the document record and indexing status.
         """
-        data = await file.read()
+        max_bytes = settings.max_upload_mb * 1024 * 1024
+        data = await file.read(max_bytes + 1)
         try:
             record, chunks = knowledge_store.ingest(
                 file.filename or "document",
                 data,
-                max_bytes=settings.max_upload_mb * 1024 * 1024,
+                max_bytes=max_bytes,
                 title=title,
             )
         except DocumentIngestionError as exc:
@@ -823,11 +824,16 @@ def create_app(
             conversation = store.get_conversation(x_session_id, conversation_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
-        audio = await file.read()
+        audio = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
         if not audio:
             raise HTTPException(status_code=400, detail="Empty audio file.")
         if len(audio) > settings.max_upload_mb * 1024 * 1024:
             raise HTTPException(status_code=413, detail="Audio file too large.")
+        content_type = file.content_type or "application/octet-stream"
+        if not (content_type.startswith("audio/") or content_type in {
+            "application/octet-stream", "video/webm", "video/mp4",
+        }):
+            raise HTTPException(status_code=415, detail="Unsupported audio format.")
         try:
             transcript, detected = await stt.transcribe(
                 audio, file.filename or "audio", file.content_type or "application/octet-stream"
@@ -918,9 +924,10 @@ def create_app(
             conversation = store.get_conversation(x_session_id, conversation_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
-        data = await file.read()
+        max_bytes = settings.max_upload_mb * 1024 * 1024
+        data = await file.read(max_bytes + 1)
         ext = Path(file.filename or "").suffix.lower()
-        if ext not in {".txt", ".pdf", ".docx"} or len(data) > settings.max_upload_mb * 1024 * 1024:
+        if ext not in {".txt", ".pdf", ".docx"} or len(data) > max_bytes or not data:
             raise HTTPException(status_code=422, detail="Unsupported or oversized attachment.")
         target_dir = Path(settings.attachments_dir) / str(conversation.session_id)
         target_dir.mkdir(parents=True, exist_ok=True)

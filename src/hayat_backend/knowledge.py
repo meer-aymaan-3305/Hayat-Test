@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import re
+import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -90,6 +91,8 @@ class KnowledgeStore:
         self.docs_dir = self.root / "documents"
         self.index_path = self.root / "index.json"
         self.docs_dir.mkdir(parents=True, exist_ok=True)
+        # Index read-modify-write must be atomic across concurrent uploads.
+        self._lock = threading.Lock()
 
     def _load_index(self) -> dict[str, Any]:
         if self.index_path.exists():
@@ -161,16 +164,18 @@ class KnowledgeStore:
             status="processing",
             sha256=digest,
         )
-        index["documents"][doc_id] = {
-            "filename": record.filename,
-            "title": doc_title,
-            "version": version,
-            "status": "processing",
-            "chunk_count": 0,
-            "uploaded_at": record.uploaded_at,
-            "sha256": digest,
-        }
-        self._save_index(index)
+        with self._lock:
+            index = self._load_index()
+            index["documents"][doc_id] = {
+                "filename": record.filename,
+                "title": doc_title,
+                "version": version,
+                "status": "processing",
+                "chunk_count": 0,
+                "uploaded_at": record.uploaded_at,
+                "sha256": digest,
+            }
+            self._save_index(index)
 
         try:
             text = _extract_text(filename, data)
@@ -178,8 +183,10 @@ class KnowledgeStore:
             if not pieces:
                 raise DocumentIngestionError("Document contained no extractable text.")
         except DocumentIngestionError as exc:
-            index["documents"][doc_id].update({"status": "failed", "error": str(exc)})
-            self._save_index(index)
+            with self._lock:
+                index = self._load_index()
+                index["documents"][doc_id].update({"status": "failed", "error": str(exc)})
+                self._save_index(index)
             record.status = "failed"
             record.error = str(exc)
             return record, []
@@ -189,12 +196,14 @@ class KnowledgeStore:
         source = SourceReference(document_id=doc_id, title=doc_title, version=version)
         chunks = [KnowledgeChunk(text=p, source=source, approved=True) for p in pieces]
 
-        index["documents"][doc_id].update({
-            "status": "indexed",
-            "chunk_count": len(chunks),
-            "error": None,
-        })
-        self._save_index(index)
+        with self._lock:
+            index = self._load_index()
+            index["documents"][doc_id].update({
+                "status": "indexed",
+                "chunk_count": len(chunks),
+                "error": None,
+            })
+            self._save_index(index)
         record.status = "indexed"
         record.chunk_count = len(chunks)
         return record, chunks
