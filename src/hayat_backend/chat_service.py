@@ -506,6 +506,15 @@ class ChatService:
         ]
         profile = self.store.save_fact_updates(conversation, fact_updates)
 
+        # CP-5 exact-summary rule: confirmation covers the summary the user saw.
+        # If any permitted Appendix A detail changed after confirmation, the
+        # earlier confirmation no longer applies and must be renewed.
+        if conversation.cp5_confirmed_at is not None and any(
+            fact.field_name in PERMITTED_FIELD_NAMES for fact in fact_updates
+        ):
+            conversation.cp5_confirmed_at = None
+            conversation.confirmed_appendix_a = None
+
         # Evaluate guardrails with conversation context and extracted facts
         decision = inspect_input(
             text,
@@ -551,12 +560,20 @@ class ChatService:
                     if not isinstance(v, dict) and k in PERMITTED_FIELD_NAMES
                 }
                 conversation.confirmed_appendix_a = confirmed_payload
-                await self.crm_client.transmit_confirmed_payload(
-                    session_id=conversation.session_id,
-                    conversation_id=conversation.id,
-                    payload=confirmed_payload,
-                    confirmation_timestamp=conversation.cp5_confirmed_at,
+                # Idempotent transmission: an identical already-confirmed payload
+                # must not be dispatched to the CRM twice.
+                already_transmitted = (
+                    getattr(conversation, "crm_payload_transmitted", None) == confirmed_payload
                 )
+                if not already_transmitted:
+                    await self.crm_client.transmit_confirmed_payload(
+                        session_id=conversation.session_id,
+                        conversation_id=conversation.id,
+                        payload=confirmed_payload,
+                        confirmation_timestamp=conversation.cp5_confirmed_at,
+                        explicit_user_confirmation=True,
+                    )
+                    conversation.crm_payload_transmitted = confirmed_payload
                 self.coordinator_service.initiate_handoff(
                     conversation=conversation,
                     session_id=conversation.session_id,
@@ -571,6 +588,8 @@ class ChatService:
                 )
             elif consent_type in ("NEGATIVE", "CONDITIONAL", "CONTRADICTORY", "DEFERRED"):
                 conversation.cp5_confirmed_at = None
+                conversation.confirmed_appendix_a = None
+                conversation.crm_payload_transmitted = None
                 clarification_reply = consent_note
 
         consent_granted = self._persist_conversational_data(
