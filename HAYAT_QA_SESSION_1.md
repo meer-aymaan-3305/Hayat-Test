@@ -58,3 +58,18 @@ Acceptable for staging; note for production capacity planning.
 ## Untested this session (per instructions)
 Knowledge upload/delete, voice STT/TTS, Arabic journeys, consent
 approve/refuse live, restart recovery (session tokens not persisted).
+
+## Session 1.1 follow-up (commit pending)
+- **Destination defect FIXED**: "Flexible on destination"/"No preference"/
+  AR مرن → `destination_preference="Flexible"`; planner no longer re-asks.
+- **Timing defect FIXED**: "Within six months", "In the next six months",
+  "Sometime over the next six months", "Within 6 months" all extract as
+  relative phrases (no date conversion).
+- **Recall PARTIAL→implemented**: deterministic `_recall_reply` echoes the
+  visitor's own permitted admin facts (EN+AR) for "what did I tell you…"
+  prompts; no facts → falls through normally; contact/clinical never echoed.
+- **Supabase mismatch**: INVESTIGATED ONLY — `consent_type` exists in
+  migration 1 but live DB has legacy `consent_records`; see
+  HAYAT_SUPABASE_SCHEMA_INVESTIGATION.md. Needs owner-authorized merge
+  migration; `create table if not exists` alone will NOT fix it.
+- Tests: 305/305 pass (10 new in tests/test_qa_session_11.py).

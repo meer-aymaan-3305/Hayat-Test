@@ -77,6 +77,68 @@ ARABIC_QUESTIONS = {
 }
 
 
+_RECALL_RE = re.compile(
+    r"\b(what did i (?:tell|say|mention)|my preferences?|what do you know about me|"
+    r"remind me what|what have i (?:told|shared)|recap|summary of what i|"
+    r"what are my (?:details|preferences)|what info do you have)\b|"
+    r"ماذا أخبرتك|تفضيلاتي|ما الذي أخبرتك به|ذكّرني بما|لخص تفضيلاتي|معلوماتي",
+    re.IGNORECASE,
+)
+
+# Permitted administrative facts safe to echo back to the visitor who
+# supplied them. Contact identifiers and clinical data are never recalled.
+_RECALL_FIELDS = (
+    "customer_category", "procedure_or_service", "wellness_programme_or_goal",
+    "destination_preference", "preferred_timing", "budget_range",
+    "value_priority", "insurance_coverage_status",
+)
+_RECALL_LABELS = {
+    "en": {
+        "customer_category": {"medical_treatment": "medical travel", "wellness": "wellness"},
+        "procedure_or_service": "treatment/specialty",
+        "wellness_programme_or_goal": "wellness goal",
+        "destination_preference": "destination",
+        "preferred_timing": "timeframe",
+        "budget_range": "budget",
+        "value_priority": "priority",
+        "insurance_coverage_status": "insurance",
+    },
+    "ar": {
+        "customer_category": {"medical_treatment": "السفر الطبي", "wellness": "العافية"},
+        "procedure_or_service": "العلاج/التخصص",
+        "wellness_programme_or_goal": "هدف العافية",
+        "destination_preference": "الوجهة",
+        "preferred_timing": "الإطار الزمني",
+        "budget_range": "الميزانية",
+        "value_priority": "الأولوية",
+        "insurance_coverage_status": "التأمين",
+    },
+}
+
+
+def _recall_reply(conversation: "Conversation", language: str) -> str | None:
+    """Deterministically echo back the visitor's own stored admin facts."""
+    facts = getattr(conversation, "case_facts", {}) or {}
+    parts: list[str] = []
+    labels = _RECALL_LABELS.get(language, _RECALL_LABELS["en"])
+    for field in _RECALL_FIELDS:
+        value = facts.get(field)
+        if value in (None, ""):
+            continue
+        if field == "customer_category":
+            value = labels["customer_category"].get(str(value), str(value))
+        else:
+            value = str(value)
+        if field == "preferred_timing" and facts.get("preferred_dates_times"):
+            continue  # avoid duplicate timing entries
+        parts.append(f"{labels[field]}: {value}")
+    if not parts:
+        return None
+    if language == "ar":
+        return "إليك ما أحتفظ به حتى الآن: " + "، ".join(parts) + "."
+    return "Here's what I have so far: " + "; ".join(parts) + "."
+
+
 def _clarify(language: str) -> str:
     """Used when the AI gave no reply, so it mustn't call the request out of scope."""
     if language == "ar":
@@ -701,7 +763,10 @@ class ChatService:
         # Robust context-aware fallbacks when model completion fails or returns None
         if reply is None:
             lower_text = text.lower()
-            if "compare" in lower_text or "destination" in lower_text or "مقارن" in text or "وجه" in text:
+            recall = _recall_reply(conversation, language) if _RECALL_RE.search(text) else None
+            if recall:
+                reply = recall
+            elif "compare" in lower_text or "destination" in lower_text or "مقارن" in text or "وجه" in text:
                 reply_used_knowledge = bool(chunks)
                 reply = (
                     "A case manager can compare destinations with you once we understand your preferences. "
@@ -1230,6 +1295,13 @@ class ChatService:
                 field_name="destination_preference", value=dest_name,
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
+        elif re.search(r"\b(flexible|open to exploring|no preference|any destination|"
+                       r"help me choose|help me decide|not sure yet|up to you)\b|"
+                       r"مرن|لا\s+تفضيل|أي\s+وجهة|ساعدني\s+أختار|غير\s+متأكد\s+بعد", text, re.I):
+            updates.append(FactValue(
+                field_name="destination_preference", value="Flexible",
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=0.9,
+            ))
         elif re.search(r"\b(compare destinations|help me compare|recommend a destination|which destination|guidance)\b|مقارنة الوجهات", text, re.I):
             updates.append(FactValue(
                 field_name="destination_preference", value="Guidance requested",
@@ -1240,7 +1312,8 @@ class ChatService:
         timing_match = re.search(
             r"\b(?:within\s+(?:the\s+)?|in\s+(?:the\s+)?|during\s+(?:the\s+)?)?"
             r"(?:next\s+(?:\d+\s+|three\s+|two\s+|six\s+)?(?:months?|weeks?|year)|"
-            r"(?:in|within)\s+\d+\s+(?:months?|weeks?)|"
+            r"(?:in|within|over)\s+(?:the\s+next\s+|the\s+)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|a\s+few|couple\s+of)\s+(?:months?|weeks?|years?)|"
+            r"sometime\s+(?:over|in|during)\s+(?:the\s+)?(?:next\s+)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|few|couple)\s+(?:months?|weeks?|years?)|"
             r"December|January|February|March|April|May|June|July|August|September|October|November|soon|asap|"
             r"weekday afternoons?|weekday mornings?|weekends?)\b|"
             r"(يناير|فبراير|مارس|أبريل|مايو|يونيو|يوليو|أغسطس|سبتمبر|أكتوبر|نوفمبر|ديسمبر|شهر|أسبوع|قريبا|المقبل|"
