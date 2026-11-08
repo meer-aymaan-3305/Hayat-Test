@@ -1,0 +1,20 @@
+# Keep the build context small and make sure no secret ever reaches an image.
+# README.md is NOT excluded: pyproject.toml names it as the package readme, so the build needs it.
+.venv
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.pytest_cache
+__pycache__
+*.py[oc]
+tests
+docs
+examples
+schemas
+scripts
+supabase
+HANDOVER.md
+Dockerfile
+.dockerignore
