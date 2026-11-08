@@ -208,6 +208,80 @@ class KnowledgeStore:
         record.chunk_count = len(chunks)
         return record, chunks
 
+    def update(
+        self,
+        document_id: str,
+        filename: str,
+        data: bytes,
+        *,
+        max_bytes: int,
+        title: str | None = None,
+    ) -> tuple[DocumentRecord, list[KnowledgeChunk]]:
+        """Update an existing document in place: same document_id, version+1.
+
+        Content is validated and extracted BEFORE the index is touched, so a
+        failed update never disturbs the previously active version. Prior
+        version files remain on disk for audit; only the active version is
+        indexed for retrieval."""
+        ext = Path(filename).suffix.lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            raise DocumentIngestionError(
+                f"File type '{ext or 'unknown'}' is not allowed. Accepted: PDF, DOCX, TXT."
+            )
+        if not data:
+            raise DocumentIngestionError("Empty file.")
+        if len(data) > max_bytes:
+            raise DocumentIngestionError(
+                f"File exceeds the {max_bytes // (1024 * 1024)} MB limit."
+            )
+
+        index = self._load_index()
+        meta = index.get("documents", {}).get(document_id)
+        if meta is None:
+            raise DocumentIngestionError("Document not found.")
+
+        # Extract first — a failure here leaves the active version untouched.
+        try:
+            text = _extract_text(filename, data)
+            pieces = _chunk_text(text)
+            if not pieces:
+                raise DocumentIngestionError("Document contained no extractable text.")
+        except DocumentIngestionError:
+            raise
+
+        digest = hashlib.sha256(data).hexdigest()
+        doc_title = (title or meta.get("title") or Path(filename).stem).strip()[:200]
+
+        with self._lock:
+            index = self._load_index()
+            meta = index["documents"][document_id]
+            version = str(int(meta.get("version", "1")) + 1)
+            (self.docs_dir / f"{document_id}-v{version}.txt").write_text(text, encoding="utf-8")
+            index["documents"][document_id].update({
+                "filename": Path(filename).name[:200],
+                "title": doc_title,
+                "version": version,
+                "status": "indexed",
+                "chunk_count": len(pieces),
+                "error": None,
+                "sha256": digest,
+                "uploaded_at": meta.get("uploaded_at"),
+            })
+            self._save_index(index)
+
+        record = DocumentRecord(
+            document_id=document_id,
+            filename=Path(filename).name[:200],
+            title=doc_title,
+            version=version,
+            status="indexed",
+            chunk_count=len(pieces),
+            sha256=digest,
+        )
+        source = SourceReference(document_id=document_id, title=doc_title, version=version)
+        chunks = [KnowledgeChunk(text=p, source=source, approved=True) for p in pieces]
+        return record, chunks
+
     def remove(self, document_id: str) -> bool:
         """Remove a document and all its stored versions from the index.
 

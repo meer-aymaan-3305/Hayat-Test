@@ -802,6 +802,39 @@ def create_app(
             for d in knowledge_store.list_documents()
         ]
 
+    @app.put("/v1/knowledge/documents/{document_id}", tags=["knowledge"])
+    async def update_knowledge_document(
+        document_id: str,
+        file: "UploadFile" = File(...),
+        title: str | None = Form(default=None),
+    ):
+        """Update an existing company knowledge document in place.
+
+        Preserves `document_id`, increments `version`, keeps prior version
+        files for audit, and re-indexes so only the new active version is
+        retrievable. A failed update leaves the previous version active.
+        """
+        max_bytes = settings.max_upload_mb * 1024 * 1024
+        data = await file.read(max_bytes + 1)
+        try:
+            record, _chunks = knowledge_store.update(
+                document_id, file.filename or "document", data,
+                max_bytes=max_bytes, title=title,
+            )
+        except DocumentIngestionError as exc:
+            status = 404 if "not found" in str(exc).lower() else 422
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+        chat_service.retriever.replace_uploaded(knowledge_store.indexed_chunks())
+        return {
+            "document_id": record.document_id,
+            "filename": record.filename,
+            "title": record.title,
+            "version": record.version,
+            "status": record.status,
+            "chunk_count": record.chunk_count,
+            "error": record.error,
+        }
+
     @app.delete("/v1/knowledge/documents/{document_id}", tags=["knowledge"])
     async def delete_knowledge_document(document_id: str):
         """Remove an approved company knowledge document and all versions.
