@@ -75,12 +75,18 @@ class GroqChatModel:
         from groq import APIError
 
         try:
+            kwargs: dict = {}
+            if self._model.startswith("openai/gpt-oss"):
+                # Reasoning models burn completion tokens on hidden reasoning;
+                # keep it low so the reply fits in the token budget.
+                kwargs["reasoning_effort"] = "low"
             response = await self._client.chat.completions.create(
                 model=self._model,
                 messages=messages,
                 temperature=self._temperature,
                 max_tokens=self._max_tokens,
                 timeout=self._timeout,
+                **kwargs,
             )
         except (APIError, TimeoutError) as exc:
             raise LLMError("Configured language model request failed.") from exc

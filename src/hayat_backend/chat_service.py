@@ -244,6 +244,37 @@ def _doc_related_turn(conversation: Any, document_context: str, text: str) -> bo
     return any(n.lower() in content for n in names)
 
 
+_DOC_SUMMARY_RE = re.compile(
+    r"summari[sz]e|summary|overview|what does (?:it|the document|my document|this) say|"
+    r"give me an overview|walk me through|ملخص|لخص|ما الذي يقوله|اشرح المستند",
+    re.I,
+)
+
+
+def _document_overview_reply(document_context: str, language: str) -> str | None:
+    """Honest overview of uploaded documents when the visitor asks for a
+    summary — lists what is on file without interpreting contents."""
+    docs = re.findall(r"### Document: (.+?) \(document_id=([^)]+)\)", document_context)
+    if not docs:
+        return None
+    items = []
+    for name, _did in docs[:5]:
+        # count page markers following this document header
+        items.append(name.strip())
+    if language == "ar":
+        return (
+            "لديك " + ("مستند" if len(items) == 1 else "مستندات") + " على الملف: "
+            + "، ".join(items)
+            + ". اسألني عن قيم أو أقسام محددة — سأقتبس النص المستخرج كما هو مع اسم المستند ورقم الصفحة."
+        )
+    return (
+        "You have " + ("a document" if len(items) == 1 else f"{len(items)} documents")
+        + " on file: " + ", ".join(items)
+        + ". Ask me about specific values or sections — I'll quote the extracted "
+        "text as written, with the document name and page."
+    )
+
+
 def _document_reply(document_context: str, text: str, language: str) -> str | None:
     """Deterministic document-grounded reply when no model reply exists.
 
@@ -476,8 +507,27 @@ _PROGRAMME_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+_COST_FAQ_RE = re.compile(
+    r"\b(how much|price|pricing|cost|expensive|cheap|rate|fee|budget)\b|"
+    r"سعر|أسعار|تكلفة|تكاليف|غالي|رخيص|كم\s+(?:السعر|التكلفة)",
+    re.IGNORECASE,
+)
+
+_COST_FAQ_EN = (
+    "There's no fixed package price — costs depend on the specific treatment or "
+    "programme, the destination and the level of coordination needed. Once I "
+    "understand what you're looking for, a coordinator can prepare a tailored "
+    "proposal for you."
+)
+_COST_FAQ_AR = (
+    "لا يوجد سعر ثابت للباقة — تعتمد التكلفة على العلاج أو البرنامج المحدد والوجهة "
+    "ومستوى التنسيق المطلوب. وبمجرد أن أفهم ما تبحث عنه، يمكن للمنسق إعداد مقترح "
+    "مخصص لك."
+)
+
 _PROGRAMMES_OVERVIEW_RE = re.compile(
     r"\b(?:what|which|tell me about|show me|guide me|explore|list|describe|"
+    r"know about|learn about|hear about|more about|info about|information about|"
     r"what are|what's|can you (?:tell me|show me|guide me))\b[^.?!]{0,60}"
     r"\b(?:wellness\s+|signature\s+)?(?:programme|program|retreat|package)s?\b|"
     r"\bsuch programmes?\b|\bthese programmes?\b|\bavailable programmes?\b|"
@@ -1012,6 +1062,17 @@ class ChatService:
                 _PROGRAMMES_OVERVIEW_AR if language == "ar" else _PROGRAMMES_OVERVIEW_EN
             )
 
+        # General cost/pricing question — answer honestly instead of letting
+        # the clarify ladder treat "price?" as a vague message. Programme-flow
+        # conversations keep their own pricing FAQ.
+        if (
+            clarification_reply is None
+            and not decision.blocked
+            and _COST_FAQ_RE.search(text)
+            and not self._in_programme_context(conversation, text)
+        ):
+            clarification_reply = _COST_FAQ_AR if language == "ar" else _COST_FAQ_EN
+
         # CP-5 & DP-2: Explicit confirmation check before transmission
         consent_type, consent_note = global_policy_engine.evaluate_cp5_consent(text, language)
         if conversation.state in ("awaiting_consent", "ready_for_submission", "offering_consultation", "pending_submission") and not decision.blocked:
@@ -1053,6 +1114,22 @@ class ChatService:
                 conversation.confirmed_appendix_a = None
                 conversation.crm_payload_transmitted = None
                 clarification_reply = consent_note
+
+        # Document evidence questions — when the visitor asks about specific
+        # values in their uploaded document, quote the extracted lines
+        # verbatim with citations BEFORE the model runs. This guarantees the
+        # reply can never invent or misquote a value; the model only handles
+        # document turns that have no matching extracted line.
+        if (
+            clarification_reply is None
+            and not decision.blocked
+            and document_context
+            and _doc_related_turn(conversation, document_context, text)
+        ):
+            if _document_evidence(document_context, text):
+                clarification_reply = _document_reply(document_context, text, language)
+            elif _DOC_SUMMARY_RE.search(text):
+                clarification_reply = _document_overview_reply(document_context, language)
 
         consent_granted = self._persist_conversational_data(
             conversation, text, language
@@ -1119,6 +1196,7 @@ class ChatService:
                 "1a. NEVER repeat information, checklists, requirements or questions you already gave earlier in this conversation. If the visitor already answered — or said they don't know, are flexible or unsure — accept it, acknowledge briefly, and move to the next step. Do not re-ask the same question.\n"
                 "1b. Do NOT list preparation requirements (medical records, reports, imaging, medications, passport) unless the visitor explicitly asks what to prepare. Mention them once, briefly, only when relevant to the next step.\n"
                 "1c. If the visitor says they still don't understand or asks you to explain again, do NOT repeat the same wording — explain it differently, more simply, with a concrete everyday example.\n"
+                "1d. If the visitor asks what they already told you or wants to recall their details, answer directly from the ALREADY KNOWN DETAILS — never ask again for something already provided.\n"
                 "0. NEVER name, recommend, rank or compare hospitals, clinics, doctors, countries or treatments, even if asked. Say a case manager will prepare options.\n"
                 "2. Do NOT promise or offer to find or recommend specific individual doctors or cardiologists. Hayat coordinates with accredited partner hospital departments; human coordinators review requests.\n"
                 "3. Do NOT claim to check live provider or doctor availability, send document upload links, or confirm live bookings.\n"
@@ -1203,10 +1281,16 @@ class ChatService:
                     "للاستعداد للاستشارة، من المفيد توفير التقارير الطبية الحديثة أو قائمة الأدوية إن وجدت، وسيوضح المنسق ما إذا كانت هناك حاجة لتقارير محددة."
                 )
             elif _SHORT_ANSWER_RE.search(text):
-                reply = (
+                ack = (
                     "Thank you for confirming your preferences."
                     if language == "en" else "شكراً لتأكيد تفضيلاتك."
                 )
+                if plan.question_text:
+                    # Keep the funnel moving — a bare ack leaves the visitor
+                    # stuck repeating "yes" with no next step.
+                    reply = f"{ack} {plan.question_text}"
+                else:
+                    reply = _clarify(language, conversation, text)
             else:
                 specialty = (
                     conversation.case_facts.get("procedure_or_service")
@@ -1725,7 +1809,8 @@ class ChatService:
             ))
         elif dest_question_pending and dest_is_open and re.search(r"\b(flexible|open to exploring|no preference|any destination|"
                        r"help me choose|help me decide|not sure yet|up to you)\b|"
-                       r"مرن|لا\s+تفضيل|أي\s+وجهة|ساعدني\s+أختار|غير\s+متأكد\s+بعد", text, re.I):
+                       r"مرن|لا\s+تفضيل|لا\s+يوجد\s+(?:لدي\s+|عندي\s+)?تفضيل|بدون\s+تفضيل|"
+                       r"أي\s+وجهة|ساعدني\s+أختار|غير\s+متأكد\s+بعد", text, re.I):
             updates.append(FactValue(
                 field_name="destination_preference", value="Flexible",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=0.9,

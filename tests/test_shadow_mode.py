@@ -11,7 +11,8 @@ from hayat_backend.llm import LLMError
 from hayat_backend.memory_store import MemoryStore
 
 # Reaches the model step for a website visitor: the scripted fallback answers it.
-OPENING_MESSAGE = "Hello, I want to know about wellness programmes"
+# (Must not match any deterministic FAQ — those bypass the model entirely.)
+OPENING_MESSAGE = "Hello, tell me something interesting about Trawellcare"
 
 
 class RecordingModel:

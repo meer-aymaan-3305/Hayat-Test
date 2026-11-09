@@ -704,7 +704,8 @@ class ProgrammeConversationService:
             r"\b(no (?:such |strong |particular |real )?preference|no preference|any(thing)? is fine|"
             r"up to you|whatever you (?:recommend|suggest|think)|surprise me|don'?t mind|open to (?:any|options|suggestions)|"
             r"you choose|you decide|help me choose|not sure yet|undecided)\b|"
-            r"لا تفضيل|لا يوجد تفضيل|أي جهة|كما تشاء|لا يهمني|مفتوح على الخيارات|غير متأكد|لا أعلم",
+            r"لا تفضيل|لا يوجد (?:لدي |عندي )?تفضيل|بدون تفضيل|ما عندي تفضيل|أي وجهة|"
+            r"كما تشاء|لا يهمني|مفتوح على الخيارات|غير متأكد|لا أعلم",
             lower,
         )
         if not enquiry.destination_preference and (

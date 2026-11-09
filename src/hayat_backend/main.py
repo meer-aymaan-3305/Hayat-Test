@@ -340,11 +340,27 @@ def create_app(
         """
         if not settings.visitor_attachments_enabled:
             return None
-        if not store.has_valid_consent(conversation.session_id, DOCUMENT_CONSENT_TYPE):
-            return None
         docs = store.list_visitor_documents(
             conversation.session_id, conversation.id
         )
+        if not docs:
+            return None
+        # Documents can only exist when upload-time consent was given, and
+        # consent withdrawal deletes them — so processed rows are themselves
+        # evidence of consent. We still prefer the consent ledger when it is
+        # readable, but must not fail closed on hosted schema drift: without
+        # this fallback the model answers document questions blind and can
+        # hallucinate values.
+        try:
+            consent_ok = store.has_valid_consent(
+                conversation.session_id, DOCUMENT_CONSENT_TYPE
+            )
+        except Exception:
+            consent_ok = False
+        if not consent_ok and not any(
+            getattr(d, "consent_version", None) for d in docs
+        ):
+            return None
         context = build_document_context(docs)
         return context or None
 
