@@ -1079,10 +1079,12 @@ class ChatService:
 
         if submission is not None:
             reply = (
-                "Your consultation request has been submitted successfully and is "
-                f"pending coordinator confirmation. Reference: {submission.id}."
+                "Your consultation request has been submitted successfully — "
+                "a coordinator will contact you shortly to confirm the next "
+                f"steps. Reference: {submission.id}."
                 if language == "en" else
-                f"تم إرسال طلب الاستشارة بنجاح وهو قيد تأكيد المنسق. الرقم المرجعي: {submission.id}."
+                f"تم إرسال طلب الاستشارة بنجاح — سيتواصل معك المنسق قريباً لتأكيد "
+                f"الخطوات التالية. الرقم المرجعي: {submission.id}."
             )
         elif clarification_reply is not None:
             reply = clarification_reply
@@ -1707,20 +1709,28 @@ class ChatService:
                 continue
             valid_dests.append(d_name)
 
+        # "Flexible"/"guidance" are only valid destination answers when the
+        # pending question is actually about the destination — otherwise a
+        # timing answer like "I'm flexible on timing" would clobber a concrete
+        # destination the visitor already gave.
+        dest_is_open = str(
+            conversation.case_facts.get("destination_preference") or ""
+        ) in ("", "Flexible", "Guidance requested")
+        dest_question_pending = pending_field in (None, "destination_preference")
         if valid_dests:
             dest_name = valid_dests[0]
             updates.append(FactValue(
                 field_name="destination_preference", value=dest_name,
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
-        elif re.search(r"\b(flexible|open to exploring|no preference|any destination|"
+        elif dest_question_pending and dest_is_open and re.search(r"\b(flexible|open to exploring|no preference|any destination|"
                        r"help me choose|help me decide|not sure yet|up to you)\b|"
                        r"مرن|لا\s+تفضيل|أي\s+وجهة|ساعدني\s+أختار|غير\s+متأكد\s+بعد", text, re.I):
             updates.append(FactValue(
                 field_name="destination_preference", value="Flexible",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=0.9,
             ))
-        elif re.search(r"\b(compare destinations|help me compare|recommend a destination|which destination|guidance)\b|مقارنة الوجهات", text, re.I):
+        elif dest_question_pending and dest_is_open and re.search(r"\b(compare destinations|help me compare|recommend a destination|which destination|guidance)\b|مقارنة الوجهات", text, re.I):
             updates.append(FactValue(
                 field_name="destination_preference", value="Guidance requested",
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,

@@ -236,7 +236,7 @@ def test_conversational_submission_is_pending_after_otp_and_consent():
     assert submitted.status_code == 200
     assert body["submission_status"] == "pending"
     assert body["conversation_state"] == "pending_coordinator_confirmation"
-    assert "pending coordinator confirmation" in body["reply"]
+    assert "coordinator will contact you shortly" in body["reply"]
     assert body["consultation"]["id"]
 
 
