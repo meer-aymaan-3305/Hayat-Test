@@ -4,9 +4,10 @@
 -- hayat_upsert_case_facts RPC does not populate, and
 -- signature_programme_enquiries lacked the columns the
 -- SignatureProgrammeEnquiry model upserts (current_stage, reference_code).
-
-alter table public.case_fact_versions
-  alter column version_number drop not null;
+--
+-- Written defensively: every change is guarded so the file is a no-op on a
+-- fresh database that never had the legacy columns, and applies the relaxations
+-- on databases that did.
 
 alter table public.signature_programme_enquiries
   add column if not exists current_stage text not null default 'discovery',
@@ -20,12 +21,31 @@ create unique index if not exists signature_programme_enquiries_reference_code_k
 -- the hayat_upsert_case_facts RPC writes version/facts/extraction_schema_version
 -- only, record_consent writes the new consent columns only, and consent is
 -- session-scoped (no conversation_id).
-alter table public.case_fact_versions
-  alter column schema_version drop not null,
-  alter column validation_status drop not null;
-
-alter table public.consent_records
-  alter column conversation_id drop not null,
-  alter column purpose drop not null,
-  alter column consent_status drop not null,
-  alter column consent_version drop not null;
+do $$
+declare
+  fixes text[][] := array[
+    ['case_fact_versions', 'version_number'],
+    ['case_fact_versions', 'schema_version'],
+    ['case_fact_versions', 'validation_status'],
+    ['consent_records', 'conversation_id'],
+    ['consent_records', 'purpose'],
+    ['consent_records', 'consent_status'],
+    ['consent_records', 'consent_version']
+  ];
+  pair text[];
+begin
+  foreach pair slice 1 in array fixes loop
+    if exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public'
+        and table_name = pair[1]
+        and column_name = pair[2]
+        and is_nullable = 'NO'
+    ) then
+      execute format(
+        'alter table public.%I alter column %I drop not null',
+        pair[1], pair[2]
+      );
+    end if;
+  end loop;
+end $$;
