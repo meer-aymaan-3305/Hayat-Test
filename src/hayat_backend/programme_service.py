@@ -73,6 +73,8 @@ _SWITCH_TO_SIGNATURE_RE = re.compile(
 
 _PROGRAMME_INFO_RE = re.compile(
     r"\b(tell me about|what do you offer|what'?s on offer|what'?s included|what is included|"
+    r"what else|what'?s in (?:this|the|it)|what does (?:it|this|that|the plan|the programme) "
+    r"(?:include|offer|have|get you)|in this plan|in the programme|plan (?:includes?|offers?|has)|"
     r"benefits?|explain|describe|more (?:details|information|info)|programme details|programme information|"
     r"what does\b.*\b(?:offer|include|involve)|guide me|i (?:was |am )?asking about|i meant)\b|"
     r"ماذا تقدم|ما الذي تقدمه|اشرح|اشرح لي|فوائد|تفاصيل|معلومات|أخبرني عن|كنت أسأل عن",
@@ -698,7 +700,25 @@ class ProgrammeConversationService:
             if term in lower:
                 enquiry.destination_preference = canonical
                 break
-        if not enquiry.destination_preference and _SKIP_KEYWORDS_RE.search(lower) and ("destination" in lower or enquiry.current_stage == ProgrammeStage.DESTINATION_PREFERENCE):
+        destination_flexible = re.search(
+            r"\b(no (?:such |strong |particular |real )?preference|no preference|any(thing)? is fine|"
+            r"up to you|whatever you (?:recommend|suggest|think)|surprise me|don'?t mind|open to (?:any|options|suggestions)|"
+            r"you choose|you decide|help me choose|not sure yet|undecided)\b|"
+            r"لا تفضيل|لا يوجد تفضيل|أي جهة|كما تشاء|لا يهمني|مفتوح على الخيارات|غير متأكد|لا أعلم",
+            lower,
+        )
+        if not enquiry.destination_preference and (
+            destination_flexible
+            or (
+                _SKIP_KEYWORDS_RE.search(lower)
+                and (
+                    "destination" in lower
+                    or "country" in lower
+                    or "place" in lower
+                    or enquiry.current_stage == ProgrammeStage.DESTINATION_PREFERENCE
+                )
+            )
+        ):
             enquiry.destination_preference = "Undecided / Open to exploring options"
 
         # Timing extraction
