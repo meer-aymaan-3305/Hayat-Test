@@ -146,3 +146,19 @@ def test_programmes_overview_does_not_hijack_interest_statement(client):
     conv, h = _conv(client)
     r = _chat(client, conv, h, "I am interested in a wellness programme.")
     assert "HAYAT-100" not in r["reply"]
+
+
+def test_service_explainer_gives_grounded_comparison(client):
+    conv, h = _conv(client)
+    r = _chat(client, conv, h, "I dont know about anything can you explain both of them")
+    assert "medical treatment" in r["reply"].lower()
+    assert "wellness" in r["reply"].lower()
+    assert "HAYAT-100" not in r["reply"]  # explainer, not catalogue
+
+
+def test_service_explainer_repeat_uses_simpler_variant(client):
+    conv, h = _conv(client)
+    r1 = _chat(client, conv, h, "can you explain both of them")
+    r2 = _chat(client, conv, h, "Still I dont understand these. Can you guide me through all these")
+    assert r2["reply"] != r1["reply"]
+    assert "simply" in r2["reply"].lower() or "holida" in r2["reply"].lower()

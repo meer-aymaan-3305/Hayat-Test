@@ -390,6 +390,86 @@ def greeting(language: str) -> str:
     )
 
 
+_SERVICE_EXPLAIN_RE = re.compile(
+    r"\b(?:explain both|explain (?:the )?(?:difference|options|services)|"
+    r"what(?:'s| is| are) the difference|how is .{0,30}different|"
+    r"medical.{0,20}(?:vs\.?|versus|or|and).{0,20}wellness|"
+    r"wellness.{0,20}(?:vs\.?|versus|or|and).{0,20}medical|"
+    r"don'?t understand|do not understand|still don'?t understand|"
+    r"not sure what (?:this|it|they) (?:is|are)|confused about|"
+    r"guide me through (?:all|everything|it|these|things)|"
+    r"walk me through (?:all|everything|it|these|things)|"
+    r"help me understand)\b",
+    re.IGNORECASE,
+)
+
+_SERVICE_EXPLAIN_EN = (
+    "Of course — happy to walk you through it.\n\n"
+    "A medical treatment consultation is for when you're thinking about "
+    "traveling abroad for a specific procedure or specialist care — things "
+    "like dental work, cardiology, orthopaedics or other treatments. We help "
+    "coordinate your records, match you with an accredited partner hospital, "
+    "and a human coordinator manages the logistics.\n\n"
+    "A wellness programme is different — it's a non-clinical retreat focused "
+    "on prevention and lifestyle: fitness, nutrition, stress, sleep and "
+    "healthy ageing, without medical treatment.\n\n"
+    "Which of those two feels closer to what you have in mind?"
+)
+_SERVICE_EXPLAIN_AR = (
+    "بالطبع — يسعدني أن أوضح لك الأمر.\n\n"
+    "الاستشارة الطبية للعلاج هي عندما تفكر في السفر إلى الخارج لإجراء "
+    "عملية أو رعاية متخصصة — مثل طب الأسنان أو أمراض القلب أو العظام أو "
+    "علاجات أخرى. نساعدك في تنسيق تقاريرك ومطابقتك مع مستشفى شريك "
+    "معتمد، ويدير المنسق البشري الترتيبات.\n\n"
+    "أما برنامج العافية فمختلف — إنه منتجع غير سريري يركز على الوقاية "
+    "ونمط الحياة: اللياقة والتغذية والتوتر والنوم والشيخوخة الصحية، "
+    "دون علاج طبي.\n\n"
+    "أيّهما يبدو أقرب لما تفكر فيه؟"
+)
+
+_SERVICE_EXPLAIN_SIMPLE_EN = (
+    "Let me put it more simply.\n\n"
+    "Medical treatment = traveling abroad for an operation or specialist "
+    "care, like dental work or heart procedures. We arrange the hospital "
+    "and paperwork; a coordinator manages everything.\n\n"
+    "Wellness = a health-focused holiday — a resort stay for fitness, "
+    "good food, relaxation and healthy ageing. No medical procedure, just "
+    "feeling better.\n\n"
+    "Which one sounds more like what you need?"
+)
+_SERVICE_EXPLAIN_SIMPLE_AR = (
+    "دعني أوضحها بطريقة أبسط.\n\n"
+    "العلاج الطبي = السفر إلى الخارج لإجراء عملية أو رعاية متخصصة، مثل "
+    "طب الأسنان أو إجراءات القلب. نرتب المستشفى والأوراق ويدير المنسق "
+    "كل شيء.\n\n"
+    "العافية = عطلة صحية — إقامة في منتجع للياقة والأكل الجيد "
+    "والاسترخاء والشيخوخة الصحية. بدون إجراءات طبية، فقط الشعور "
+    "بالتحسن.\n\n"
+    "أيّهما يبدو أقرب لما تحتاجه؟"
+)
+
+
+def _service_explain_reply(language: str, conversation: Any) -> str:
+    """Alternate between the full explanation and the simpler analogy so a
+    repeated 'I don't understand' never gets the identical text back."""
+    full, simple = (
+        (_SERVICE_EXPLAIN_AR, _SERVICE_EXPLAIN_SIMPLE_AR)
+        if language == "ar"
+        else (_SERVICE_EXPLAIN_EN, _SERVICE_EXPLAIN_SIMPLE_EN)
+    )
+    full_marker = "منتجع غير سريري" if language == "ar" else "non-clinical retreat"
+    simple_marker = "بطريقة أبسط" if language == "ar" else "more simply"
+    assistant_msgs = [
+        m for m in getattr(conversation, "messages", [])[:-1] if m.role == "assistant"
+    ]
+    last = assistant_msgs[-1].content if assistant_msgs else ""
+    if simple_marker in last:
+        return full
+    if any(full_marker in m.content for m in assistant_msgs):
+        return simple
+    return full
+
+
 _PROGRAMMES_OVERVIEW_RE = re.compile(
     r"\b(?:what|which|tell me about|show me|guide me|explore|list|describe|"
     r"what are|what's|can you (?:tell me|show me|guide me))\b[^.?!]{0,60}"
@@ -883,6 +963,20 @@ class ChatService:
             clarification_reply = self._build_consultation_summary(conversation, language)
             conversation.state = "awaiting_consent"
 
+        # Service explainer — "explain both / what's the difference /
+        # guide me through" gets a grounded, empathetic explanation of the
+        # two service types instead of a vague or repetitive model reply.
+        if (
+            clarification_reply is None
+            and not decision.blocked
+            and _SERVICE_EXPLAIN_RE.search(text)
+            and not (
+                document_context
+                and _doc_related_turn(conversation, document_context, text)
+            )
+        ):
+            clarification_reply = _service_explain_reply(language, conversation)
+
         # Approved programmes overview — "what programmes do you offer"
         # gets the grounded catalogue answer deterministically instead of a
         # vague model reply or a funnel question.
@@ -999,6 +1093,7 @@ class ChatService:
                 "1. Ask at most ONE question in your response. Never ask multiple questions.\n"
                 "1a. NEVER repeat information, checklists, requirements or questions you already gave earlier in this conversation. If the visitor already answered — or said they don't know, are flexible or unsure — accept it, acknowledge briefly, and move to the next step. Do not re-ask the same question.\n"
                 "1b. Do NOT list preparation requirements (medical records, reports, imaging, medications, passport) unless the visitor explicitly asks what to prepare. Mention them once, briefly, only when relevant to the next step.\n"
+                "1c. If the visitor says they still don't understand or asks you to explain again, do NOT repeat the same wording — explain it differently, more simply, with a concrete everyday example.\n"
                 "0. NEVER name, recommend, rank or compare hospitals, clinics, doctors, countries or treatments, even if asked. Say a case manager will prepare options.\n"
                 "2. Do NOT promise or offer to find or recommend specific individual doctors or cardiologists. Hayat coordinates with accredited partner hospital departments; human coordinators review requests.\n"
                 "3. Do NOT claim to check live provider or doctor availability, send document upload links, or confirm live bookings.\n"
