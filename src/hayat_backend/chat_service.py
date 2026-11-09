@@ -955,8 +955,12 @@ class ChatService:
             known_str = ", ".join(f"{k}: {v}" for k, v in known_facts.items())
             system = (
                 "You are Hayat, a concise bilingual coordination assistant for medical travel and wellness.\n"
+                "STYLE: warm, empathetic, concise — 1-3 sentences per reply, never a wall of text. "
+                "Acknowledge the visitor's latest message in a few words before moving on.\n"
                 "CRITICAL POLICIES:\n"
                 "1. Ask at most ONE question in your response. Never ask multiple questions.\n"
+                "1a. NEVER repeat information, checklists, requirements or questions you already gave earlier in this conversation. If the visitor already answered — or said they don't know, are flexible or unsure — accept it, acknowledge briefly, and move to the next step. Do not re-ask the same question.\n"
+                "1b. Do NOT list preparation requirements (medical records, reports, imaging, medications, passport) unless the visitor explicitly asks what to prepare. Mention them once, briefly, only when relevant to the next step.\n"
                 "0. NEVER name, recommend, rank or compare hospitals, clinics, doctors, countries or treatments, even if asked. Say a case manager will prepare options.\n"
                 "2. Do NOT promise or offer to find or recommend specific individual doctors or cardiologists. Hayat coordinates with accredited partner hospital departments; human coordinators review requests.\n"
                 "3. Do NOT claim to check live provider or doctor availability, send document upload links, or confirm live bookings.\n"
@@ -1588,6 +1592,29 @@ class ChatService:
             updates.append(FactValue(
                 field_name="preferred_dates_times", value=time_val,
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
+            ))
+        elif re.search(
+            r"\b(any\s*time|whenever|up to you)\b|في\s+أي\s+وقت",
+            text, re.I,
+        ) or (
+            pending_field in {"preferred_timing", "preferred_dates_times"}
+            and re.search(
+                r"\b(flexible|no preference|open to suggestions|"
+                r"(?:don'?t|do not|not)\s+(?:exactly\s+|really\s+)?(?:know|sure)|"
+                r"unsure|not sure|not certain|depends|idk|dunno\b|"
+                r"مرن|لا\s+تفضيل|لا\s+أدري|غير\s+متأكد|لست\s+متأكد)",
+                text, re.I,
+            )
+        ):
+            # "I don't know / flexible" is a valid timing answer — record it
+            # instead of re-asking the same question forever.
+            updates.append(FactValue(
+                field_name="preferred_timing", value="Flexible",
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=0.9,
+            ))
+            updates.append(FactValue(
+                field_name="preferred_dates_times", value="Flexible",
+                status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=0.9,
             ))
 
         # Budget range

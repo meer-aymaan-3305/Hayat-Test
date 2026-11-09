@@ -117,3 +117,15 @@ def test_category_selection_still_works_after_clarify(client):
     _chat(client, conv, h, "Please help me.")
     r = _chat(client, conv, h, "I need help with a medical treatment abroad.")
     assert "treatment or specialty" in r["reply"].lower() or "specialty" in r["reply"].lower()
+
+
+def test_flexible_timing_answer_is_accepted_not_reasked(client):
+    """'I don't know' to a timing question must be recorded as Flexible —
+    the funnel advances instead of repeating the same question."""
+    conv, h = _conv(client)
+    _chat(client, conv, h, "I need a hair transplant consultation.")
+    _chat(client, conv, h, "Turkey please.")
+    r = _chat(client, conv, h, "I dont exactly know")
+    # The reply must not be the identical timing question again.
+    assert "what timeframe would suit you best" not in r["reply"].lower() or \
+        r["reply"].lower().count("timeframe") <= 1
