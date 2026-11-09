@@ -9,6 +9,7 @@ context. Uploads stay disabled by default (VISITOR_ATTACHMENTS_ENABLED).
 from __future__ import annotations
 
 import io
+import shutil
 from pathlib import Path
 
 import pytest
@@ -134,6 +135,8 @@ def test_extract_docx():
 
 def test_extract_image_ocr():
     pytest.importorskip("pytesseract")
+    if shutil.which("tesseract") is None:
+        pytest.skip("the Tesseract program is not installed here (it is in the Docker image)")
     pytest.importorskip("PIL")
     data = _png_bytes()
     text, meta = vd.extract_document_text(data, ".png")

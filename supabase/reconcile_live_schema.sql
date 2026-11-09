@@ -1,8 +1,12 @@
 -- Brings the LIVE Supabase project's older tables up to what the code expects.
 -- Written 2026-11-08 after comparing the live table list with supabase/migrations.
 --
--- Run this ONCE, BEFORE the 8 migration files, in the Supabase SQL editor.
--- Then run the 8 files in supabase/migrations in timestamp order.
+-- STATUS (checked 2026-11-09): already applied to the live project, together with
+-- every file in supabase/migrations. Do not run it again there; it would change nothing.
+--
+-- Only for a project that still has the OLD table layout: run this first, then the
+-- files in supabase/migrations in timestamp order. A brand-new, empty project
+-- skips this script and runs only the migration files.
 --
 -- Safe by design:
 --   * Only adds columns. Nothing is dropped, renamed or rewritten.
@@ -15,15 +19,31 @@
 
 begin;
 
+-- Running it again is harmless: a table only has to be empty while one of its
+-- required columns is still missing. Once the columns exist, rows are fine.
 do $$
 declare
-  t text;
+  target record;
   n bigint;
 begin
-  foreach t in array array['consent_records', 'case_fact_versions', 'audit_events'] loop
-    execute format('select count(*) from public.%I', t) into n;
-    if n > 0 then
-      raise exception 'Table % has % rows. Stop and review: this script only supports empty tables here.', t, n;
+  for target in
+    select * from (values
+      ('consent_records', 'consent_type'),
+      ('consent_records', 'granted'),
+      ('consent_records', 'policy_version')
+    ) as required(table_name, column_name)
+  loop
+    if not exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public'
+        and table_name = target.table_name
+        and column_name = target.column_name
+    ) then
+      execute format('select count(*) from public.%I', target.table_name) into n;
+      if n > 0 then
+        raise exception 'Table % has % rows but no % column. Stop and review: this script only adds required columns to empty tables.',
+          target.table_name, n, target.column_name;
+      end if;
     end if;
   end loop;
 end $$;

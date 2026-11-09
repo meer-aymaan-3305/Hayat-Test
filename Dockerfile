@@ -2,10 +2,10 @@
 #
 # trawellcare-hayat (FastAPI). Build:  docker build -t trawellcare-hayat .
 #
-# RUN AS A SINGLE INSTANCE. Hayat keeps chats in memory until Supabase is connected,
-# so a second copy (or uvicorn --workers) would give visitors a different, empty
-# conversation depending on which one answered. No settings are baked in; they come
-# from the environment at start.
+# RUN AS A SINGLE INSTANCE. Uploaded files live on the /app/data volume and some
+# conversation state is cached in memory, so a second copy (or uvicorn --workers)
+# could answer a visitor without their files or context. No settings are baked in;
+# they come from the environment at start.
 #
 # The Python version comes from .python-version (3.14) and pyproject.toml; if
 # python:3.14-slim ever stops being available, change it here on purpose rather than silently.
@@ -42,6 +42,11 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH"
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
+# Tesseract reads text from photos and scanned PDFs that visitors upload, in English
+# and Arabic. Without it those uploads are marked "failed" instead of being read.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng tesseract-ocr-ara \
+ && rm -rf /var/lib/apt/lists/*
 # An ordinary user with no login shell, instead of root.
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin hayat
 # Uploaded knowledge documents and attachments live here. Mount a volume on

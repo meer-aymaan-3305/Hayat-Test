@@ -48,6 +48,7 @@ create index if not exists idx_coordinator_handoffs_status
 alter table public.coordinator_handoffs enable row level security;
 
 -- Service role has full administrative access
+drop policy if exists "Service role manages coordinator handoffs" on public.coordinator_handoffs;
 create policy "Service role manages coordinator handoffs"
     on public.coordinator_handoffs
     for all
@@ -56,12 +57,14 @@ create policy "Service role manages coordinator handoffs"
     with check (true);
 
 -- Authenticated coordinators can view and update handoffs
+drop policy if exists "Authorized coordinators can view handoffs" on public.coordinator_handoffs;
 create policy "Authorized coordinators can view handoffs"
     on public.coordinator_handoffs
     for select
     to authenticated
     using (auth.jwt() ->> 'role' in ('coordinator', 'case_manager', 'wellness_curator', 'service_role'));
 
+drop policy if exists "Authorized coordinators can update handoff progress" on public.coordinator_handoffs;
 create policy "Authorized coordinators can update handoff progress"
     on public.coordinator_handoffs
     for update

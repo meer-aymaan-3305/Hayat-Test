@@ -24,6 +24,7 @@ table it must alter has rows — if it errors, stop and review before continuing
 7. `supabase/migrations/20261103210000_coordinator_handoffs.sql`
 8. `supabase/migrations/20261103223000_signature_programme_enquiries.sql`
 9. `supabase/migrations/20261110000000_visitor_documents.sql`
+10. `supabase/migrations/20261111000000_post_migration_schema_fixes.sql`
 
 ## Step 3 — Verify
 
@@ -37,7 +38,7 @@ where table_schema='public' and table_name in
    'consultation_requests','coordinator_handoffs',
    'signature_programme_enquiries','visitor_documents')
 order by 1;
--- expect 14 rows
+-- expect 13 rows
 
 select column_name from information_schema.columns
 where table_schema='public' and table_name='consent_records'
@@ -85,4 +86,4 @@ Then smoke-test the API: `GET /health` → all integrations `ok`.
 - AV/malware scanning + encrypted storage for uploads.
 - `ara` Tesseract data for Arabic scanned documents.
 - Firebase phone verification for consultation submission.
-- Push `launch-v1` (9 local commits) once repo access is restored.
+- Status 2026-11-09: the dev project (`ykhggqiyjzqisgolataa`) already has steps 1 and 2 applied (checked read-only). The production project (`vqptxtblvnufnhsvwywt`) has not been checked. Do not run them there again. A new, empty project skips step 1 and runs only the migration files; they are safe to run twice.

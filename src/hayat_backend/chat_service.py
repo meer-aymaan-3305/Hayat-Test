@@ -2186,6 +2186,12 @@ class ChatService:
                         )
                     else:
                         reply = _clarify(language, conversation, text)
+                # Say "Understood — you're interested in …" once; on later turns a
+                # short thanks keeps the conversation from sounding scripted.
+                if reply.startswith(("Understood — you're interested in", "مفهوم — أنت مهتم")) and any(
+                    m.role == "assistant" and reply in m.content for m in conversation.messages[:-1]
+                ):
+                    reply = "Thank you, noted." if language == "en" else "شكراً، تم تسجيل ذلك."
 
         # Single composition layer: Append the planned question only if not already present
         if clarification_reply is None and not decision.reply and submission is None and decision.reason != "out_of_scope":
@@ -2611,17 +2617,23 @@ class ChatService:
                 "medical", "treatment", "medical treatment", "medical care", "care",
                 "wellness", "a wellness", "consultation", "",
             }:
-                specialty_match = re.search(
+                specialty_pattern = re.compile(
                     r"\b(cardiology|orthopedics|orthopaedics|dermatology|oncology|neurology|fertility|ivf|"
                     r"ophthalmology|pediatrics|endocrinology|nephrology|urology|gastroenterology|"
                     r"pulmonology|rheumatology|hematology|psychiatry|gynecology|obstetrics|"
                     r"dentistry|dental|dental implants|heart treatment|treatment for my heart|"
-                    r"knee replacement|knee surgery|spine surgery|hair transplant|bariatric|cosmetic)\b|"
+                    r"knee replacement|knee surgery|spine surgery|hair transplant|bariatric|cosmetic|"
+                    r"heart surgery|bypass surgery|hip replacement|hip surgery|shoulder surgery|"
+                    r"eye surgery|cataract surgery|cataract|lasik|liver transplant|kidney transplant|"
+                    r"cancer treatment|weight loss surgery|gastric sleeve|gastric bypass)\b|"
                     r"\b[a-zA-Z]{3,}(?:ology|iatry|ics|surgery|therapy|plasty)\b|"
-                    r"(قسطرة|قلب|أسنان|طب أسنان|عظام|جلدية|أورام|عيون|تجميل|خصوبة|أطفال|باطنية|علاج طبيعي)",
-                    clean_sub or clean or text,
+                    r"(قسطرة|قلب|أسنان|طب أسنان|عظام|جلدية|أورام|عيون|تجميل|خصوبة|أطفال|باطنية|علاج طبيعي|"
+                    r"الركبة|ركبة|الورك|العمود الفقري|زراعة الشعر|زراعة شعر|تكميم المعدة)",
                     re.IGNORECASE,
                 )
+                # clean_sub drops a trailing "surgery"/"treatment", which turns
+                # "knee surgery" into "knee"; fall back to the full phrase.
+                specialty_match = specialty_pattern.search(clean_sub or clean or text) or specialty_pattern.search(clean or text)
                 if specialty_match:
                     spec_val = specialty_match.group(0).strip().capitalize()
                     updates.append(FactValue(

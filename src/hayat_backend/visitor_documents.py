@@ -18,6 +18,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -111,11 +112,24 @@ def validate_upload(data: bytes, ext: str) -> str | None:
     return None
 
 
-def _ocr_image(image_bytes: bytes, langs: str = "eng") -> tuple[str, float | None]:
+@lru_cache(maxsize=1)
+def _ocr_languages() -> str:
+    """English, plus Arabic when its Tesseract data is installed (it is in the Docker image)."""
+    import pytesseract
+
+    try:
+        installed = set(pytesseract.get_languages(config=""))
+    except Exception:  # noqa: BLE001 — Tesseract missing; the OCR call reports the failure
+        return "eng"
+    return "eng+ara" if "ara" in installed else "eng"
+
+
+def _ocr_image(image_bytes: bytes, langs: str | None = None) -> tuple[str, float | None]:
     """OCR one image; returns (text, mean_confidence 0-100 or None)."""
     import pytesseract
     from PIL import Image
 
+    langs = langs or _ocr_languages()
     image = Image.open(io.BytesIO(image_bytes))
     text = pytesseract.image_to_string(image, lang=langs)
     conf = None

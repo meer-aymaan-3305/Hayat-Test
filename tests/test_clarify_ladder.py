@@ -162,3 +162,39 @@ def test_service_explainer_repeat_uses_simpler_variant(client):
     r2 = _chat(client, conv, h, "Still I dont understand these. Can you guide me through all these")
     assert r2["reply"] != r1["reply"]
     assert "simply" in r2["reply"].lower() or "holida" in r2["reply"].lower()
+
+
+@pytest.mark.parametrize(
+    "opening",
+    [["hello"], ["hello", "hmm not sure"], ["hello", "hmm", "just browsing"]],
+)
+def test_stated_need_after_vague_turns_starts_medical_journey(client, opening):
+    """A greeting first must not stop a later "I need knee surgery" from
+    starting the medical journey."""
+    conv, h = _conv(client)
+    for msg in opening:
+        _chat(client, conv, h, msg)
+    r = _chat(client, conv, h, "I need knee surgery")
+    assert "knee surgery" in r["reply"]
+    assert "coordinator? They can help" not in r["reply"]
+    # The next answer moves the journey on instead of starting over.
+    r = _chat(client, conv, h, "Germany")
+    assert "medical treatment or a wellness programme" not in r["reply"]
+    assert "Understood" not in r["reply"]
+
+
+def test_stated_wellness_need_after_greeting_starts_wellness_journey(client):
+    conv, h = _conv(client)
+    _chat(client, conv, h, "hello")
+    r = _chat(client, conv, h, "I want a yoga retreat")
+    assert "wellness" in r["reply"].lower()
+    assert "what you're looking for" not in r["reply"]
+
+
+def test_arabic_stated_need_after_greeting_starts_medical_journey(client):
+    conv, h = _conv(client, "ar")
+    _chat(client, conv, h, "مرحبا")
+    r = _chat(client, conv, h, "أحتاج عملية في الركبة")
+    assert "الركبة" in r["reply"]
+    r = _chat(client, conv, h, "الهند")
+    assert "علاج طبي أم في برنامج عافية" not in r["reply"]

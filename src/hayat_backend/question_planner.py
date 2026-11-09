@@ -50,7 +50,7 @@ _MEDICAL_HINT_RE = re.compile(
     r"\b(medical|medicine|treatment|procedure|surgery|hospital|doctor|specialist|"
     r"clinic|dental|cardiology|cardiologist|orthop\w+|dermatolog\w+|oncolog\w+|"
     r"medical travel|travell?ing for|travel for)\b|"
-    r"سفر\s+طبي|عملية\s+طبية|سفر|علاج|جراحة|مستشفى|طبيب|أسنان|قسطرة|باطنية|تجميل",
+    r"سفر\s+طبي|عملية\s+طبية|سفر|علاج|جراحة|عملية|مستشفى|طبيب|أسنان|قسطرة|باطنية|تجميل|ركبة|الورك|العمود\s+الفقري",
     re.IGNORECASE,
 )
 _WELLNESS_HINT_RE = re.compile(
@@ -357,19 +357,15 @@ class QuestionPlanner:
             or _AMBIGUOUS_HINT_RE.search(text)
             or (
                 self._journey_hint(text)
-                and user_turns <= 1
-                and not _FOLLOWUP_CONTEXT_RE.search(text)
+                and self._hint_allowed(text, user_turns)
                 and (_INTENT_DECLARATION_RE.search(text) or not question_requested)
             )
         ):
-            # Journey hints apply to first-turn intent declarations only;
-            # follow-up/contextual phrasing and pure informational questions
+            # Journey hints apply to the first message, and to any later message
+            # that states a need ("hello" first, then "I need knee surgery").
+            # Follow-up/contextual phrasing and pure informational questions
             # keep the generic clarify/answer behaviour.
-            hint = (
-                self._journey_hint(text)
-                if user_turns <= 1 and not _FOLLOWUP_CONTEXT_RE.search(text)
-                else None
-            )
+            hint = self._journey_hint(text) if self._hint_allowed(text, user_turns) else None
             if hint == "medical_treatment":
                 field, label = ("procedure_or_service", "treatment or specialty")
                 return PlannedStep(
@@ -596,6 +592,13 @@ class QuestionPlanner:
     @staticmethod
     def _has_ambiguous_category(text: str) -> bool:
         return bool(re.search(r"\b(medical|wellness|both|either|not sure|undecided)\b", text, re.I))
+
+    @staticmethod
+    def _hint_allowed(text: str, user_turns: int) -> bool:
+        """Whether a medical/wellness hint in this message may choose the journey."""
+        if _FOLLOWUP_CONTEXT_RE.search(text):
+            return False
+        return user_turns <= 1 or bool(_INTENT_DECLARATION_RE.search(text))
 
     @staticmethod
     def _journey_hint(text: str) -> str | None:
