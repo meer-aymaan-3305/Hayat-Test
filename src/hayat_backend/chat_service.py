@@ -20,7 +20,14 @@ from .rag import InMemoryRetriever, KnowledgeChunk
 from .schemas.intake import FactStatus, FactValue
 from .schemas.consultation import ConsultationDetails, PreferredContactMethod
 from .schemas.chat import ChatAction
-from .question_planner import QuestionPlanner, append_planned_question
+from .question_planner import (
+    CLARIFY_COORDINATOR_Q,
+    CLARIFY_OPEN_Q,
+    QuestionPlanner,
+    append_planned_question,
+    clarify_attempts,
+    wants_open_category,
+)
 
 
 from .policy_engine import (
@@ -73,6 +80,8 @@ ARABIC_QUESTIONS = {
     "What timeframe would suit you best?": "ما الإطار الزمني الأنسب لك؟",
     "How may I help with your consultation details?": "كيف يمكنني مساعدتك في تفاصيل استشارتك؟",
     "Would you like help with a medical treatment or a wellness programme?": "هل تود المساعدة في علاج طبي أم في برنامج عافية؟",
+    CLARIFY_OPEN_Q: "هل يمكنك أن تخبرني بمزيد من التفاصيل عمّا تبحث عنه؟ ليس بالضرورة أن يكون علاجاً طبياً أو برنامج عافية — يكفي أن تصفه بكلماتك.",
+    CLARIFY_COORDINATOR_Q: "أريد التأكد من حصولك على المساعدة المناسبة — هل تريد أن أوصلك بمنسق من ترافيل كير؟ يمكنهم المساعدة في الحجوزات أو الاستفسارات الحالية أو ترتيبات السفر أو أي شيء آخر.",
     "Would you like to request a consultation with a coordinator using these details?": "هل ترغب في طلب استشارة مع منسق بناءً على هذه التفاصيل؟",
 }
 
@@ -152,11 +161,203 @@ def _recall_reply(conversation: "Conversation", language: str) -> str | None:
     return "Here's what I have so far: " + "; ".join(parts) + "."
 
 
-def _clarify(language: str) -> str:
-    """Used when the AI gave no reply, so it mustn't call the request out of scope."""
+_DOC_KEYWORD_RE = re.compile(
+    r"\b(?:document|doc|report|results?|tests?|scan|upload|"
+    r"file|pdf|value|reading|level)\b|مستند|تقرير|نتائج|فحص|ملف|قيمة|تحليل",
+    re.I,
+)
+# Platform/service questions must never be hijacked by document context.
+_PLATFORM_Q_RE = re.compile(
+    r"\b(?:service|services|programme|program|price|cost|fee|book|booking|"
+    r"consultation|coordinator|destination|wellness|travel|appointment|"
+    r"available|offer|packages?)\b|خدمة|برنامج|سعر|حجز|استشارة|منسق|وجهة|تكلفة",
+    re.I,
+)
+_DOC_TERM_STOPWORDS = {
+    "what", "about", "that", "this", "with", "have", "does", "your", "from",
+    "please", "tell", "show", "the", "and", "for", "document", "doc",
+    "report", "value", "values", "result", "results", "test", "tests",
+    "upload", "file", "pdf", "page", "say", "says", "content", "contents",
+    "there", "here", "when", "where", "which", "who", "how", "why", "are",
+    "was", "were", "you", "can", "could", "would", "should", "my", "me",
+}
+
+
+def _doc_query_terms(text: str) -> list[str]:
+    return [
+        w for w in re.findall(r"[A-Za-z0-9\u0600-\u06FF]{4,}", text.lower())
+        if w not in _DOC_TERM_STOPWORDS and not w.isdigit() and any(c.isalpha() for c in w)
+    ]
+
+
+def _document_evidence(document_context: str, text: str) -> list[tuple[str, int | None, str]]:
+    """Find extracted-text lines relevant to the question.
+
+    Returns (doc_filename, page, line) tuples — only verbatim document
+    content, never interpretation."""
+    terms = _doc_query_terms(text)
+    if not terms:
+        return []
+    hits: list[tuple[str, int | None, str]] = []
+    doc_name = ""
+    page: int | None = None
+    for raw in document_context.splitlines():
+        line = raw.strip()
+        if line.startswith("### Document:"):
+            doc_name = line[len("### Document:"):].split(" (")[0].strip()
+            page = None
+            continue
+        if line.startswith("## Page "):
+            try:
+                page = int(line[len("## Page "):].strip())
+            except ValueError:
+                page = None
+            continue
+        low = line.lower()
+        if line and any(t in low for t in terms):
+            hits.append((doc_name, page, line))
+            if len(hits) >= 3:
+                break
+    return hits
+
+
+def _doc_related_turn(conversation: Any, document_context: str, text: str) -> bool:
+    """True when this turn is about the visitor's uploaded documents.
+
+    Explicit document keywords always qualify. A short follow-up also
+    qualifies when the previous assistant turn already referenced a
+    document — unless it looks like a platform/service question."""
+    if _DOC_KEYWORD_RE.search(text):
+        return True
+    if _PLATFORM_Q_RE.search(text) or len(text) > 120:
+        return False
+    names = re.findall(r"### Document: (.+?) \(document_id=", document_context)
+    last = next(
+        (m for m in reversed(getattr(conversation, "messages", [])) if m.role == "assistant"),
+        None,
+    )
+    if last is None:
+        return False
+    content = last.content.lower()
+    if "document" in content or "مستند" in content:
+        return True
+    return any(n.lower() in content for n in names)
+
+
+def _document_reply(document_context: str, text: str, language: str) -> str | None:
+    """Deterministic document-grounded reply when no model reply exists.
+
+    Quotes matching extracted lines verbatim with document/page citation,
+    and never interprets values clinically."""
+    hits = _document_evidence(document_context, text)
+    names = re.findall(r"### Document: (.+?) \(document_id=", document_context)
+    label = ", ".join(names[:3]) if names else "your uploaded document"
+    if hits:
+        quotes = []
+        for doc_name, page, line in hits:
+            cite = f"{doc_name}" + (f", page {page}" if page else "")
+            quotes.append(f"“{line}” ({cite})")
+        if language == "ar":
+            return (
+                "هذا ما يذكره مستندك:\n" + "\n".join(quotes)
+                + "\nهذا نص مستخرج من المستند كما هو — لا أستطيع تفسير ما إذا كانت "
+                "القيم طبيعية؛ يمكن لمختص شرحها في سياقها السريري."
+            )
+        return (
+            "Here's what your document reports:\n" + "\n".join(quotes)
+            + "\nThat's extracted text quoted as-is — I can't say whether the "
+            "values are normal; a clinician can explain them in context."
+        )
     if language == "ar":
-        return "هل تود المساعدة في علاج طبي أم في برنامج عافية؟"
-    return "Would you like help with a medical treatment or a wellness programme?"
+        return (
+            f"لديّ مستندك المرفوع ({label}) محفوظاً. يمكنني مساعدةك "
+            "في شرح المصطلحات أو إبراز القيم الواردة فيه، لكن لا "
+            "أستطيع مراجعته بالكامل الآن — يمكن للمنسق أو الطبيب "
+            "مراجعته معك. ما الذي تودّ معرفته؟"
+        )
+    return (
+        f"I have your uploaded document ({label}) on file. I can "
+        "help explain terms or highlight values it reports, but I "
+        "can't review it fully right now — a coordinator or "
+        "clinician can go through it with you. What would you "
+        "like to know?"
+    )
+
+
+_TERMINAL_CLARIFY_MARKERS = (
+    "I can help with Hayat services",
+    "still here to help",
+    "reach a TrawellCare coordinator directly",
+    "يمكنني المساعدة في خدمات حياة",
+    "ما زلت هنا للمساعدة",
+    "منسق من ترافيل كير مباشرة",
+)
+_TERMINAL_CLARIFY_EN = (
+    "I'm Hayat, the TrawellCare assistant — I can help with Hayat "
+    "services, medical travel, wellness programmes, consultations and "
+    "coordination. If you need help with something else, a member of "
+    "the TrawellCare team can assist — just tell me what you need.",
+    "I'm still here to help — ask me about Hayat services, medical "
+    "travel, wellness programmes or consultations, or tell me what "
+    "you need in your own words.",
+    "If it's easier, you can also reach a TrawellCare coordinator "
+    "directly — just say 'coordinator' and I'll make sure the team "
+    "sees your request.",
+)
+_TERMINAL_CLARIFY_AR = (
+    "أنا حياة، مساعدة ترافيل كير — يمكنني المساعدة في خدمات حياة "
+    "والسفر الطبي وبرامج العافية والاستشارات والتنسيق. وإذا احتجت "
+    "مساعدة في أمر آخر، يمكن لعضو من فريق ترافيل كير مساعدتك — "
+    "أخبرني بما تحتاجه.",
+    "ما زلت هنا للمساعدة — اسألني عن خدمات حياة أو السفر الطبي أو "
+    "برامج العافية أو الاستشارات، أو أخبرني بما تحتاجه بكلماتك.",
+    "وإذا كان أسهل، يمكنك أيضاً التواصل مع منسق من ترافيل كير مباشرة — "
+    "فقط قل «منسق» وسأحرص على وصول طلبك إلى الفريق.",
+)
+
+
+def _terminal_clarify_count(conversation: Any) -> int:
+    """How many terminal (post-ladder) replies this conversation already has."""
+    if conversation is None:
+        return 0
+    return sum(
+        1
+        for m in getattr(conversation, "messages", [])
+        if m.role == "assistant"
+        and any(marker in m.content for marker in _TERMINAL_CLARIFY_MARKERS)
+    )
+
+
+def _clarify(language: str, conversation: Any = None, text: str = "") -> str:
+    """Used when the AI gave no reply, so it mustn't call the request out of scope.
+
+    Never repeats the same question: the first vague turn gets the category
+    choice, the next an open-ended prompt, and repeated failure offers a
+    human coordinator. An explicit out-of-category request skips to the
+    open question immediately."""
+    attempts = clarify_attempts(conversation) if conversation is not None else 0
+    if wants_open_category(text):
+        attempts = max(attempts, 1)
+    if language == "ar":
+        if attempts <= 0:
+            return "هل تود المساعدة في علاج طبي أم في برنامج عافية؟"
+        if attempts == 1:
+            return (
+                "بالطبع، يسعدني مساعدتك. "
+                + ARABIC_QUESTIONS.get(CLARIFY_OPEN_Q, CLARIFY_OPEN_Q)
+            )
+        if attempts == 2:
+            return ARABIC_QUESTIONS.get(CLARIFY_COORDINATOR_Q, CLARIFY_COORDINATOR_Q)
+        tail = _terminal_clarify_count(conversation)
+        return _TERMINAL_CLARIFY_AR[tail % len(_TERMINAL_CLARIFY_AR)]
+    if attempts <= 0:
+        return "Would you like help with a medical treatment or a wellness programme?"
+    if attempts == 1:
+        return f"Of course — I'm happy to help. {CLARIFY_OPEN_Q}"
+    if attempts == 2:
+        return CLARIFY_COORDINATOR_Q
+    tail = _terminal_clarify_count(conversation)
+    return _TERMINAL_CLARIFY_EN[tail % len(_TERMINAL_CLARIFY_EN)]
 
 
 def _out_of_scope(language: str) -> str:
@@ -821,25 +1022,8 @@ class ChatService:
             recall = _recall_reply(conversation, language) if _RECALL_RE.search(text) else None
             if recall:
                 reply = recall
-            elif document_context and re.search(
-                r"\b(?:document|doc|report|results?|tests?|scan|upload|"
-                r"file|pdf)\b|مستند|تقرير|نتائج|فحص|ملف",
-                text, re.I,
-            ):
-                names = re.findall(r"### Document: (.+?) \(document_id=", document_context)
-                label = ", ".join(names[:3]) if names else "your uploaded document"
-                reply = (
-                    f"I have your uploaded document ({label}) on file. I can "
-                    "help explain terms or highlight values it reports, but I "
-                    "can't review it fully right now — a coordinator or "
-                    "clinician can go through it with you. What would you "
-                    "like to know?"
-                    if language == "en" else
-                    f"لديّ مستندك المرفوع ({label}) محفوظاً. يمكنني مساعدةك "
-                    "في شرح المصطلحات أو إبراز القيم الواردة فيه، لكن لا "
-                    "أستطيع مراجعته بالكامل الآن — يمكن للمنسق أو الطبيب "
-                    "مراجعته معك. ما الذي تودّ معرفته؟"
-                )
+            elif document_context and _doc_related_turn(conversation, document_context, text):
+                reply = _document_reply(document_context, text, language)
             elif "compare" in lower_text or "destination" in lower_text or "مقارن" in text or "وجه" in text:
                 reply_used_knowledge = bool(chunks)
                 reply = (
@@ -905,7 +1089,7 @@ class ChatService:
                             else "العافية جزء كبير مما نقدمه — يمكنني إرشادك إلى التجربة المناسبة بعد معرفة هدفك."
                         )
                     else:
-                        reply = _clarify(language)
+                        reply = _clarify(language, conversation, text)
 
         # Single composition layer: Append the planned question only if not already present
         if clarification_reply is None and not decision.reply and submission is None and decision.reason != "out_of_scope":

@@ -86,6 +86,7 @@ from .visitor_documents import (
     build_document_context,
     classify_extraction,
     extract_document_text,
+    upload_acknowledgement,
     validate_upload as validate_document_upload,
 )
 
@@ -1267,6 +1268,7 @@ def create_app(
         consent: str = Form(default=""),
         x_session_id: UUID = Header(..., alias="X-Session-ID"),
         x_session_token: str = Header(..., alias="X-Session-Token"),
+        x_reply_language: Literal["en", "ar"] | None = Header(default=None, alias="X-Reply-Language"),
     ):
         """Upload a visitor medical document (PDF/DOCX/PNG/JPG).
 
@@ -1341,7 +1343,35 @@ def create_app(
             "Visitor document uploaded [session=%s doc=%s status=%s bytes=%d]",
             x_session_id, doc_id, status, len(data),
         )
-        return doc.public_dict()
+
+        # Post an honest status acknowledgement into the conversation so the
+        # visitor sees whether the document was actually read — same pattern
+        # as the plain /attachments flow.
+        language = (
+            x_reply_language
+            or (conversation.messages[-1].language if conversation.messages else None)
+            or store.get_session(x_session_id).locale
+        )
+        language = language if language in {"en", "ar"} else "en"
+        user_text = redact_message(
+            f"Uploaded document: {filename}" if language == "en"
+            else f"مستند مرفوع: {filename}"
+        )
+        store.append_message(conversation, "user", user_text, language)
+        reply_text = upload_acknowledgement(
+            status, filename, language, page_count=doc.page_count
+        )
+        reply = store.append_message(conversation, "assistant", reply_text, language)
+        for message in conversation.messages[-2:]:
+            global_audit_store.log_transcript(
+                session_id=conversation.session_id,
+                conversation_id=conversation.id,
+                sequence=message.sequence,
+                role=message.role,
+                content=message.content,
+                language=language,
+            )
+        return {**doc.public_dict(), "reply": reply.content, "message_id": str(reply.id)}
 
     @app.get("/v1/conversations/{conversation_id}/documents", tags=["documents"])
     async def list_visitor_documents(

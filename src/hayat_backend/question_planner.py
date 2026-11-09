@@ -15,6 +15,7 @@ class PlannedStep:
     question_text: str | None = None
     target_field: str | None = None
     resume_goal: str | None = None
+    clarify_attempts: int = 0
 
 
 _CONSULTATION_INTENT = re.compile(
@@ -57,6 +58,40 @@ _AMBIGUOUS_HINT_RE = re.compile(
     r"(طبية|علاج|جراحة).{0,40}(عافية|لياقة)|(عافية|لياقة).{0,40}(طبية|علاج|جراحة)",
     re.IGNORECASE,
 )
+# Category-clarification ladder. The same either/or question must never be
+# repeated: the first vague turn gets the category choice, the next gets an
+# open-ended prompt, and repeated failure offers a human coordinator.
+CLARIFY_CATEGORY_Q = (
+    "Would you like help with a medical treatment or a wellness programme?"
+)
+CLARIFY_OPEN_Q = (
+    "Could you tell me a little more about what you're looking for? "
+    "It doesn't have to be medical treatment or wellness — just describe "
+    "it in your own words."
+)
+CLARIFY_COORDINATOR_Q = (
+    "I want to make sure you get the right help — would you like me to "
+    "connect you with a TrawellCare coordinator? They can help with "
+    "bookings, existing enquiries, travel arrangements, or anything else."
+)
+# Substrings that identify each ladder rung inside stored assistant replies
+# (English canonical text and the Arabic translations appended by ChatService).
+_CLARIFY_MARKERS = (
+    "medical treatment or a wellness programme",
+    "what you're looking for",
+    "connect you with a TrawellCare coordinator",
+    "علاج طبي أم في برنامج عافية",
+    "تبحث عنه",
+    "منسق من ترافيل كير",
+)
+# Explicit out-of-category phrasing skips straight to the open question.
+_OPEN_CATEGORY_RE = re.compile(
+    r"\b(something else|anything else|something different|something unrelated|"
+    r"not related to|other (?:things?|stuff|matters)|help me with something)\b|"
+    r"شيء آخر|غير ذلك|شيء مختلف|مساعدة في شيء",
+    re.IGNORECASE,
+)
+
 _INTENT_DECLARATION_RE = re.compile(
     r"\b(interested|interest|looking for|want|need|exploring|seeking|would like|"
     r"i'?m interested|i am interested)\b|"
@@ -64,6 +99,22 @@ _INTENT_DECLARATION_RE = re.compile(
     r"عايز|أبغى|ابغى|بدّي|محتاج|محتاجة|ودي|وديّة",
     re.IGNORECASE,
 )
+
+
+def wants_open_category(text: str) -> bool:
+    """True when the visitor explicitly asks for something outside the
+    medical-treatment/wellness categories."""
+    return bool(_OPEN_CATEGORY_RE.search(text))
+
+
+def clarify_attempts(conversation: Any) -> int:
+    """How many category-clarification questions this conversation already asked."""
+    return sum(
+        1
+        for m in getattr(conversation, "messages", [])
+        if m.role == "assistant"
+        and any(marker in m.content for marker in _CLARIFY_MARKERS)
+    )
 
 
 class QuestionPlanner:
@@ -220,14 +271,14 @@ class QuestionPlanner:
                     question_text=self._question_for(field, "wellness"),
                     target_field=field,
                 )
+            attempts, question = self._category_question(text, conversation)
             return PlannedStep(
                 "clarify_category",
                 "The customer has not selected a journey.",
                 question_goal="customer category",
-                question_text=(
-                    "Would you like help with a medical treatment or a wellness programme?"
-                ),
+                question_text=question,
                 target_field="customer_category",
+                clarify_attempts=attempts,
             )
         elif question_requested:
             return PlannedStep(
@@ -277,6 +328,20 @@ class QuestionPlanner:
             if not self._known(conversation, field):
                 return field, label
         return None
+
+    def _category_question(self, text: str, conversation: Any) -> tuple[int, str | None]:
+        attempts = clarify_attempts(conversation)
+        if wants_open_category(text):
+            attempts = max(attempts, 1)
+        if attempts <= 0:
+            return 0, CLARIFY_CATEGORY_Q
+        if attempts == 1:
+            return attempts, CLARIFY_OPEN_Q
+        if attempts == 2:
+            return attempts, CLARIFY_COORDINATOR_Q
+        # Ladder exhausted: no further question — ChatService falls back to a
+        # capability summary so the same prompt is never repeated.
+        return attempts, None
 
     @staticmethod
     def _category(conversation: Any) -> str | None:

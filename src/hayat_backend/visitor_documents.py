@@ -256,3 +256,54 @@ def build_document_context(
         if remaining <= 0:
             break
     return "\n\n".join(blocks)
+
+
+def upload_acknowledgement(
+    status: str,
+    filename: str,
+    language: str = "en",
+    page_count: int | None = None,
+) -> str:
+    """Honest chat acknowledgement for a document upload.
+
+    Only a ``processed`` document may be described as readable; failed or
+    low-confidence extractions ask for a clearer upload and never claim a
+    review that did not happen.
+    """
+    pages = f" ({page_count} page{'s' if page_count != 1 else ''})" if page_count else ""
+    if status == STATUS_PROCESSED:
+        if language == "ar":
+            return (
+                f"استلمت ملفك «{filename}»{pages} وتمكنت من قراءة نصه. "
+                "يمكنك أن تسألني عن محتواه — سأشرح المصطلحات وألخص النتائج "
+                "وأبرز القيم الواردة فيه. لا أستطيع التشخيص أو اقتراح تغييرات "
+                "في العلاج، لكن يمكن لمنسق أو مختص مراجعة المستند معك."
+            )
+        return (
+            f"I've received {filename}{pages} and was able to read its text. "
+            "Ask me about its contents — I can explain terms, summarise "
+            "findings and highlight the values it reports. I can't diagnose "
+            "or recommend treatment changes, but a coordinator or clinician "
+            "can review it with you."
+        )
+    if status == STATUS_NEEDS_CLEARER:
+        if language == "ar":
+            return (
+                f"استلمت «{filename}» لكنني لم أستطع قراءته بوضوح. "
+                "يرجى رفع نسخة أوضح — مسح ضوئي بجودة أفضل أو ملف PDF/DOCX "
+                "قائم على النص."
+            )
+        return (
+            f"I received {filename}, but I couldn't read it clearly. "
+            "Please upload a clearer copy — a sharper scan or a text-based "
+            "PDF/DOCX."
+        )
+    if language == "ar":
+        return (
+            f"استلمت «{filename}» لكن تعذر معالجته. "
+            "يرجى المحاولة بنسخة أوضح (PDF أو DOCX أو PNG أو JPG)."
+        )
+    return (
+        f"I received {filename}, but I couldn't process it. "
+        "Please try a clearer copy (PDF, DOCX, PNG or JPG)."
+    )

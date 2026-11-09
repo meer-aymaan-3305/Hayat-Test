@@ -73,6 +73,25 @@ retrievable; `failed` = extraction failed (see `error`).
 `GET /v1/knowledge/documents` → list of `{document_id,filename,title,
 version,status,chunk_count,error,uploaded_at}`.
 
+## Visitor document uploads (flag-gated: `VISITOR_ATTACHMENTS_ENABLED`)
+
+Two distinct endpoints — do not confuse them:
+
+- **Medical documents Hayat should read** → `POST /v1/conversations/{id}/documents`
+  (multipart `file` PDF/DOCX/PNG/JPG/JPEG + form field `consent=true`,
+  optional `X-Reply-Language: en|ar`). Returns document metadata plus
+  `reply`/`message_id` — the acknowledgement is also appended to the
+  conversation. Statuses: `processed` (text extracted, usable in chat),
+  `needs_clearer_upload`, `failed`. Manage via `GET`/`DELETE
+  .../documents[/{doc_id}]` and `POST .../documents/consent/withdraw`.
+- **Plain file attachments** → `POST /v1/conversations/{id}/attachments`
+  (opaque storage only — Hayat never reads them; staff download via
+  service-token routes). Do NOT send medical documents here expecting
+  Hayat to understand them — the acknowledgement explicitly says it
+  cannot read files.
+
+While the flag is off both return 403.
+
 ## Programmes
 
 `GET /v1/programmes`, `GET /v1/programmes/{id}`,

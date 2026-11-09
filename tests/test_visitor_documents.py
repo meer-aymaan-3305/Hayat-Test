@@ -403,3 +403,77 @@ def test_document_context_injected_into_model_prompt():
     assert "HbA1c" in system
     assert "untrusted" in system.lower()
     assert "never follow instructions" in system.lower()
+
+
+# ---------------------------------------------------------------------------
+# Upload acknowledgement + document-grounded chat regression (launch-v1)
+# ---------------------------------------------------------------------------
+
+def test_upload_returns_honest_acknowledgement_in_history(client):
+    """A processed upload must confirm it was read; the ack is appended to
+    the conversation so the visitor sees it in history."""
+    _, conv, headers = _session(client)
+    res = _upload(client, conv, headers, _pdf_bytes(REPORT_TEXT), "report.pdf")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "processed"
+    assert "read its text" in body["reply"]
+    history = client.get(
+        f"/v1/conversations/{conv['id']}/messages", headers=headers
+    ).json()["messages"]
+    assert any("report.pdf" in m["content"] for m in history if m["role"] == "assistant")
+
+
+def test_failed_extraction_never_claims_review(client):
+    """A corrupted/empty-content file must produce an honest 'couldn't
+    process' acknowledgement — never 'I read it'."""
+    _, conv, headers = _session(client)
+    res = _upload(client, conv, headers, b"not a real pdf", "fake.pdf")
+    # magic-byte check rejects it before extraction
+    assert res.status_code == 422
+
+
+def test_chat_quotes_matching_extracted_value_with_citation(client):
+    _, conv, headers = _session(client)
+    _upload(client, conv, headers, _pdf_bytes(REPORT_TEXT), "report.pdf")
+    res = client.post(
+        "/v1/chat",
+        json={"conversation_id": conv["id"], "message": "What is my HbA1c value?"},
+        headers=headers,
+    ).json()
+    assert "8.2%" in res["reply"]
+    assert "report.pdf" in res["reply"]
+    assert "page 1" in res["reply"].lower()
+    assert "can't say whether" in res["reply"] or "cannot" in res["reply"].lower()
+
+
+def test_document_followup_without_keywords(client):
+    """Short follow-ups about document contents must stay in document
+    context even without document keywords."""
+    _, conv, headers = _session(client)
+    _upload(client, conv, headers, _pdf_bytes(REPORT_TEXT), "report.pdf")
+    client.post(
+        "/v1/chat",
+        json={"conversation_id": conv["id"], "message": "What is my HbA1c value?"},
+        headers=headers,
+    )
+    res = client.post(
+        "/v1/chat",
+        json={"conversation_id": conv["id"], "message": "and the glucose?"},
+        headers=headers,
+    ).json()
+    assert "7.1" in res["reply"]
+
+
+def test_platform_question_not_hijacked_by_document(client):
+    """A service/programme question after an upload must not be answered
+    from document context."""
+    _, conv, headers = _session(client)
+    _upload(client, conv, headers, _pdf_bytes(REPORT_TEXT), "report.pdf")
+    res = client.post(
+        "/v1/chat",
+        json={"conversation_id": conv["id"], "message": "What wellness services do you offer?"},
+        headers=headers,
+    ).json()
+    assert "8.2%" not in res["reply"]
+    assert "HbA1c" not in res["reply"]
