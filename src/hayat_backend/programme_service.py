@@ -60,7 +60,7 @@ _PROGRAMME_DETECTION_RE = re.compile(
 )
 
 _SWITCH_TO_MEDICAL_RE = re.compile(
-    r"\b(?:switch|change|back to|return to|prefer|want)\b.*\b(?:medical|cardiology|orthopedic|surgery|treatment|doctor|hospital|medical travel)\b|"
+    r"\b(?:switch|change|back to|return to|prefer|want|need|looking for|interested in|book)\b.*\b(?:medical|cardiology|orthopedic|surgery|treatment|dental|doctor|hospital|medical travel|consultation)\b|"
     r"سفر طبي|علاج طبي|جراحة|مستشفى|طبيب",
     re.IGNORECASE,
 )
@@ -711,7 +711,7 @@ class ProgrammeConversationService:
                 enquiry.destination_preference = canonical
                 break
         destination_flexible = re.search(
-            r"\b(no (?:such |strong |particular |real )?preference|no preference|any(thing)? is fine|"
+            r"\b(no (?:destination |country |place |such |strong |particular |real )?preference|no preference|any(thing)? is fine|"
             r"up to you|whatever you (?:recommend|suggest|think)|surprise me|don'?t mind|open to (?:any|options|suggestions)|"
             r"you choose|you decide|help me choose|not sure yet|undecided)\b|"
             r"لا تفضيل|لا يوجد (?:لدي |عندي )?تفضيل|بدون تفضيل|ما عندي تفضيل|أي وجهة|"

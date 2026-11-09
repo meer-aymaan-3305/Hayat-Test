@@ -1839,7 +1839,7 @@ class ChatService:
                 field_name="destination_preference", value=dest_name,
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
-        elif dest_question_pending and dest_is_open and re.search(r"\b(flexible|open to exploring|no preference|any destination|"
+        elif dest_question_pending and dest_is_open and re.search(r"\b(flexible|open to exploring|no (?:destination |country |place )?preference|any destination|"
                        r"help me choose|help me decide|not sure yet|up to you)\b|"
                        r"مرن|لا\s+تفضيل|لا\s+يوجد\s+(?:لدي\s+|عندي\s+)?تفضيل|بدون\s+تفضيل|"
                        r"أي\s+وجهة|ساعدني\s+أختار|غير\s+متأكد\s+بعد", text, re.I):
