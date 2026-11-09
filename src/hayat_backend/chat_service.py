@@ -390,6 +390,32 @@ def greeting(language: str) -> str:
     )
 
 
+_PROGRAMMES_OVERVIEW_RE = re.compile(
+    r"\b(?:what|which|tell me about|show me|guide me|explore|list|describe|"
+    r"what are|what's|can you (?:tell me|show me|guide me))\b[^.?!]{0,60}"
+    r"\b(?:wellness\s+|signature\s+)?(?:programme|program|retreat|package)s?\b|"
+    r"\bsuch programmes?\b|\bthese programmes?\b|\bavailable programmes?\b|"
+    r"ما\s+هي\s+برامج|برامج\s+العافية|أخبرني\s+عن\s+البرامج|ما\s+البرامج",
+    re.IGNORECASE,
+)
+
+_PROGRAMMES_OVERVIEW_EN = (
+    "TrawellCare's signature wellness programmes are three retreats: "
+    "HAYAT-100 (longevity & healthy ageing), AAfiya (women's fitness & "
+    "wellness), and FFounders (executive fitness & wellness for founders "
+    "and leaders). We also coordinate non-clinical wellness stays more "
+    "broadly. Which of these sounds closest to what you're looking for — "
+    "or would you like help choosing?"
+)
+_PROGRAMMES_OVERVIEW_AR = (
+    "برامج العافية المتميزة من ترافيل كير هي ثلاث رحلات: HAYAT-100 "
+    "(طول العمر والشيخوخة الصحية)، وAAfiya (لياقة وعافية السيدات)، "
+    "وFFounders (لياقة وعافية التنفيذيين ورواد الأعمال). كما ننسّق إقامات "
+    "عافية غير سريرية بشكل أوسع. أيّها يبدو أقرب لما تبحث عنه — أم تودّ "
+    "مساعدة في الاختيار؟"
+)
+
+
 _SHORT_ANSWER_RE = re.compile(
     r"^\s*(yes|yeah|yep|sure|ok|okay|certainly|no|nope|neither|either(?: is fine)?|"
     r"any(?: city| option)?(?: is fine)?|both(?: are fine)?|no preference|"
@@ -856,6 +882,18 @@ class ChatService:
         if summary_intent and self.coordinator_service.is_consultation_ready(conversation) and not decision.blocked and clarification_reply is None:
             clarification_reply = self._build_consultation_summary(conversation, language)
             conversation.state = "awaiting_consent"
+
+        # Approved programmes overview — "what programmes do you offer"
+        # gets the grounded catalogue answer deterministically instead of a
+        # vague model reply or a funnel question.
+        if (
+            clarification_reply is None
+            and not decision.blocked
+            and _PROGRAMMES_OVERVIEW_RE.search(text)
+        ):
+            clarification_reply = (
+                _PROGRAMMES_OVERVIEW_AR if language == "ar" else _PROGRAMMES_OVERVIEW_EN
+            )
 
         # CP-5 & DP-2: Explicit confirmation check before transmission
         consent_type, consent_note = global_policy_engine.evaluate_cp5_consent(text, language)

@@ -129,3 +129,20 @@ def test_flexible_timing_answer_is_accepted_not_reasked(client):
     # The reply must not be the identical timing question again.
     assert "what timeframe would suit you best" not in r["reply"].lower() or \
         r["reply"].lower().count("timeframe") <= 1
+
+
+def test_programmes_overview_question_gets_catalogue_answer(client):
+    """'What programmes do you offer' must get the grounded programme list,
+    not a vague model reply or a funnel question."""
+    conv, h = _conv(client)
+    _chat(client, conv, h, "I am interested in a wellness programme.")
+    r = _chat(client, conv, h, "What are such programmes?")
+    assert "HAYAT-100" in r["reply"] and "AAfiya" in r["reply"] and "FFounders" in r["reply"]
+
+
+def test_programmes_overview_does_not_hijack_interest_statement(client):
+    """Declaring interest must still enter the wellness funnel, not get
+    the catalogue FAQ."""
+    conv, h = _conv(client)
+    r = _chat(client, conv, h, "I am interested in a wellness programme.")
+    assert "HAYAT-100" not in r["reply"]

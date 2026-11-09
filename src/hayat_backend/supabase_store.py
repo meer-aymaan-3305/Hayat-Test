@@ -393,10 +393,21 @@ class SupabaseStore:
         )
 
     def record_consent(self, session_id: UUID, payload: dict[str, object]) -> dict[str, object]:
-        data = _row(self.client.table("consent_records").insert({
-            "guest_session_id": str(session_id), **payload,
-        }).execute())
-        return data
+        record = {"id": uuid4(), **payload}
+        try:
+            _row(self.client.table("consent_records").insert({
+                "guest_session_id": str(session_id), **payload,
+            }).execute())
+        except APIError as exc:
+            if not _is_missing_schema_error(exc):
+                raise
+            # Consent schema migration pending — fail closed: the record is
+            # NOT persisted, so has_valid_consent stays False and consent-
+            # gated features remain unavailable rather than crashing the turn.
+            logger.warning(
+                "Hayat consent migration is pending; consent record not persisted."
+            )
+        return record
 
     def has_valid_consent(self, session_id: UUID, consent_type: str) -> bool:
         try:
