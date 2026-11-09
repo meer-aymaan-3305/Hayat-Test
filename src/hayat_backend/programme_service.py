@@ -524,7 +524,17 @@ class ProgrammeConversationService:
         if enquiry.destination_preference and not enquiry.preferred_travel_period:
             enquiry.current_stage = ProgrammeStage.TRAVEL_PERIOD
             self.store.save_programme_enquiry(enquiry)
-            dest_ack = "سجلت وجهتك المفضلة. " if language == "ar" else f"I have noted your destination preference for {enquiry.destination_preference}. "
+            open_dest = "open" in str(enquiry.destination_preference).lower() or "undecided" in str(enquiry.destination_preference).lower()
+            if open_dest:
+                dest_ack = (
+                    "ممتاز، سنستكشف الخيارات المناسبة لك. " if language == "ar"
+                    else "Noted — we'll keep the destination options open for you. "
+                )
+            else:
+                dest_ack = (
+                    "سجلت وجهتك المفضلة. " if language == "ar"
+                    else f"I have noted your destination preference for {enquiry.destination_preference}. "
+                )
             if language == "ar":
                 reply = (
                     f"{dest_ack}مواعيد الرحلات والمنتجعات قيد الإعداد حالياً مع شركائنا.\n\n"

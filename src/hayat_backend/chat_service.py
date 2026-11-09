@@ -244,6 +244,28 @@ def _doc_related_turn(conversation: Any, document_context: str, text: str) -> bo
     return any(n.lower() in content for n in names)
 
 
+_DOC_CLINICAL_RE = re.compile(
+    r"worried|worry|alarming|dangerous|serious|normal|abnormal|diagnos|"
+    r"should i (?:be )?(?:concerned|worried)|is (?:this|it|my \w+) (?:bad|high|low|dangerous)|"
+    r"what does (?:this|it) mean|explain (?:this|the) result|interpret|"
+    r"قلق|خطر|طبيعي|غير طبيعي|تشخيص|ماذا يعني|تفسير",
+    re.I,
+)
+
+_DOC_CLINICAL_REPLY_EN = (
+    "I can't interpret whether your results are normal or concerning — that "
+    "needs a qualified clinician who can see the full clinical picture. Your "
+    "document is on file, and a coordinator can help arrange a professional "
+    "review of it. If anything feels urgent or you're unwell, please seek "
+    "medical care promptly."
+)
+_DOC_CLINICAL_REPLY_AR = (
+    "لا أستطيع تفسير ما إذا كانت نتائجك طبيعية أو مقلقة — فهذا يتطلب طبيباً "
+    "مؤهلاً يطلع على الصورة السريرية الكاملة. مستندك محفوظ لدي، ويمكن للمنسق "
+    "المساعدة في ترتيب مراجعة مهنية له. إذا كان هناك أي أمر عاجل أو تشعر "
+    "بتوعك، يرجى طلب الرعاية الطبية فوراً."
+)
+
 _DOC_SUMMARY_RE = re.compile(
     r"summari[sz]e|summary|overview|what does (?:it|the document|my document|this) say|"
     r"give me an overview|walk me through|ملخص|لخص|ما الذي يقوله|اشرح المستند",
@@ -1124,10 +1146,20 @@ class ChatService:
             clarification_reply is None
             and not decision.blocked
             and document_context
-            and _doc_related_turn(conversation, document_context, text)
+            and (
+                _doc_related_turn(conversation, document_context, text)
+                # A query whose terms match extracted document lines is
+                # document-related even without explicit doc keywords —
+                # e.g. "is my cholesterol high?" right after a lab report.
+                or _document_evidence(document_context, text)
+            )
         ):
             if _document_evidence(document_context, text):
                 clarification_reply = _document_reply(document_context, text, language)
+            elif _DOC_CLINICAL_RE.search(text):
+                clarification_reply = (
+                    _DOC_CLINICAL_REPLY_AR if language == "ar" else _DOC_CLINICAL_REPLY_EN
+                )
             elif _DOC_SUMMARY_RE.search(text):
                 clarification_reply = _document_overview_reply(document_context, language)
 
