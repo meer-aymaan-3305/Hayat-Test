@@ -71,6 +71,32 @@ _SWITCH_TO_SIGNATURE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_PROGRAMME_INFO_RE = re.compile(
+    r"\b(tell me about|what do you offer|what'?s on offer|what'?s included|what is included|"
+    r"benefits?|explain|describe|more (?:details|information|info)|programme details|programme information|"
+    r"what does\b.*\b(?:offer|include|involve)|guide me|i (?:was |am )?asking about|i meant)\b|"
+    r"ماذا تقدم|ما الذي تقدمه|اشرح|اشرح لي|فوائد|تفاصيل|معلومات|أخبرني عن|كنت أسأل عن",
+    re.IGNORECASE,
+)
+
+_PROGRAMME_AR_DETAIL: dict[str, dict[str, str]] = {
+    "hayat_100": {
+        "focus": "يركز HAYAT-100 على طول العمر والشيخوخة الصحية من خلال التغذية السليمة، والنشاط البدني واللياقة، والنوم والاستشفاء، والتعلم بإشراف مختصين.",
+        "philosophy": "الأمر لا يتعلق فقط بالعيش حتى سن المئة، بل بجعل كل عام ذا قيمة.",
+        "themes": "التغذية السليمة والعادات الحياتية، والنشاط البدني والقوة والمرونة، والراحة والنوم والتعافي، واليقظة الذهنية وإدارة التوتر",
+    },
+    "aafiya": {
+        "focus": "AAfiya هي تجربة للياقة والعافية مخصصة للسيدات، تجمع بين الحركة والتغذية السليمة والعناية الذاتية والتواصل الإيجابي في بيئة مرحبة لجميع المستويات.",
+        "philosophy": "رحلتك. عافيتك. بطريقتك.",
+        "themes": "البيلاتس واليوغا وتمارين اللياقة، وورش العمل الصحية والعناية الذاتية، والتغذية المتوازنة والأكل الواعي، والاسترخاء والتأمل وبناء الصداقات",
+    },
+    "ffounders": {
+        "focus": "FFounders هو منتجع متميز للياقة والعافية التنفيذية مصمم لمؤسسي الشركات ورواد الأعمال والقادة لإعادة شحن طاقتهم وبناء المرونة الجسدية والنفسية.",
+        "philosophy": "بناء شركة ناجحة يجب ألا يكون على حساب بناء حياة أكثر صحة.",
+        "themes": "اللياقة والقوة البدنية والتحمل، وإدارة التوتر والمرونة وعلوم النوم والأداء، والتغذية والطاقة المستدامة، واللقاءات النوعية مع قادة الأعمال",
+    },
+}
+
 _SKIP_KEYWORDS_RE = re.compile(
     r"\b(skip|flexible|not sure|undecided|don't know|no preference|any|either|next question|skip next|later|open to exploring)\b|"
     r"تخطي|مرن|غير متأكد|لا أعلم|لا تفضيل|أي منها|السؤال التالي|لاحقاً|منفتح على الخيارات",
@@ -305,6 +331,15 @@ class ProgrammeConversationService:
         faq_response = self._check_faq_queries(lower_text, language, enquiry)
         if faq_response:
             reply = faq_response
+            suggestions = self._contextual_next_suggestions(enquiry, language)
+            return self._build_result(enquiry, reply, suggestions, language)
+
+        # 3b. Programme detail/info questions ("tell me about HAYAT-100",
+        # "what do you offer", "what are the benefits") — answer from the
+        # approved catalog instead of falling through to the stage prompt.
+        detail_response = self._check_programme_detail_query(text, lower_text, language, enquiry)
+        if detail_response:
+            reply = detail_response
             suggestions = self._contextual_next_suggestions(enquiry, language)
             return self._build_result(enquiry, reply, suggestions, language)
 
@@ -742,6 +777,78 @@ class ProgrammeConversationService:
             return DESTINATIONS_EXPLANATION_AR if language == "ar" else DESTINATIONS_EXPLANATION_EN
 
         return None
+
+    def _resolve_programme(self, lower_text: str, enquiry: SignatureProgrammeEnquiry) -> ProgrammeId | None:
+        """Resolve which programme a detail question refers to: an explicit
+        programme name in the message wins, then the enquiry's primary or sole
+        interested programme."""
+        if re.search(r"hayat[- ]?100|حياة[- ]?100", lower_text):
+            return ProgrammeId.HAYAT_100
+        if re.search(r"aafiya|aafiyah|عافية\s+السيدات|برنامج\s+السيدات", lower_text):
+            return ProgrammeId.AAFIYA
+        if re.search(r"ffounders|f[- ]?founders|فاوندرز", lower_text):
+            return ProgrammeId.FFOUNDERS
+        if enquiry.primary_programme in (p.value for p in ProgrammeId):
+            return ProgrammeId(enquiry.primary_programme)
+        if len(enquiry.interested_programmes) == 1:
+            return ProgrammeId(enquiry.interested_programmes[0])
+        return None
+
+    def _check_programme_detail_query(
+        self,
+        text: str,
+        lower_text: str,
+        language: str,
+        enquiry: SignatureProgrammeEnquiry,
+    ) -> str | None:
+        """Answer "tell me about / what do you offer / benefits" questions from
+        the approved programme catalog instead of repeating the stage prompt."""
+        if _SKIP_KEYWORDS_RE.search(lower_text) or not _PROGRAMME_INFO_RE.search(lower_text):
+            return None
+        # A bare first mention ("tell me about AAfiya") should go through the
+        # programme-selection branch, which records the choice and offers
+        # activity suggestions. Only answer directly when the visitor is
+        # already inside a programme or asks a deeper question.
+        deeper_intent = re.search(
+            r"offer|included|benefit|detail|explain|guide|understand|more|again|really|actually|mean|"
+            r"ماذا تقدم|فوائد|تفاصيل|اشرح|مزيد|فهمت|لا أفهم|الفرق",
+            lower_text,
+        )
+        if not enquiry.primary_programme and not deeper_intent:
+            return None
+        pid = self._resolve_programme(lower_text, enquiry)
+        if pid is None:
+            return None
+        detail = get_programme(pid)
+        if detail is None:
+            return None
+
+        if not enquiry.primary_programme:
+            enquiry.primary_programme = pid.value
+            if pid.value not in enquiry.interested_programmes:
+                enquiry.interested_programmes.append(pid.value)
+            if enquiry.current_stage in (ProgrammeStage.DISCOVERY, ProgrammeStage.PROGRAMME_SELECTED):
+                enquiry.current_stage = ProgrammeStage.PREFERENCE_COLLECTION
+            self.store.save_programme_enquiry(enquiry)
+
+        if language == "ar":
+            ar = _PROGRAMME_AR_DETAIL.get(pid.value, {})
+            return (
+                f"{detail.name} — {ar.get('focus', '')}\n\n"
+                f"فكرة البرنامج: \"{ar.get('philosophy', '')}\"\n\n"
+                f"تركز التجربة على: {ar.get('themes', '')}.\n\n"
+                "يمكنك أيضاً أن تسألني عن الوجهات، أو الأسعار، أو شكل اليوم النموذجي في المنتجع."
+            )
+        themes = ", ".join(detail.distinguishing_themes[:5])
+        return (
+            f"{detail.name} — {detail.tagline}.\n\n"
+            f"{detail.focus}\n\n"
+            f'The idea behind it: "{detail.philosophy}"\n\n'
+            f"It's a {detail.duration_total_days}-day experience "
+            f"({detail.retreat_days} days of retreat activities plus {detail.travel_days} travel days), "
+            f"built around {themes}.\n\n"
+            "You can also ask me about destinations, pricing, or what a typical day looks like."
+        )
 
     def _contextual_next_suggestions(
         self,

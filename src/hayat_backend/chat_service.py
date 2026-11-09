@@ -470,6 +470,12 @@ def _service_explain_reply(language: str, conversation: Any) -> str:
     return full
 
 
+_PROGRAMME_NAME_RE = re.compile(
+    r"hayat[- ]?100|aafiya|aafiyah|ffounders|f[- ]?founders|"
+    r"حياة[- ]?100|فاوندرز|عافية\s+السيدات",
+    re.IGNORECASE,
+)
+
 _PROGRAMMES_OVERVIEW_RE = re.compile(
     r"\b(?:what|which|tell me about|show me|guide me|explore|list|describe|"
     r"what are|what's|can you (?:tell me|show me|guide me))\b[^.?!]{0,60}"
@@ -790,6 +796,19 @@ class ChatService:
                 visitor=visitor,
                 contactable=contactable,
             )
+            # Persist the service category into case_facts — without this the
+            # programme context is lost on the next turn when the store
+            # reloads case_facts (Supabase), kicking the visitor out of the
+            # signature-programme flow mid-conversation.
+            self.store.save_fact_updates(conversation, [
+                FactValue(
+                    field_name="service_category",
+                    value="signature_programmes",
+                    status=FactStatus.CONFIRMED,
+                    source_message_id=user_message.id,
+                    confidence=1.0,
+                )
+            ])
             reply = prog_result["reply"]
             if prior_user_message_count == 0 and not reply.startswith("Hello") and not reply.startswith("مرحباً"):
                 reply = _opening(language) + reply
@@ -966,10 +985,13 @@ class ChatService:
         # Service explainer — "explain both / what's the difference /
         # guide me through" gets a grounded, empathetic explanation of the
         # two service types instead of a vague or repetitive model reply.
+        # Never fires inside an active signature-programme conversation —
+        # "guide me through this programme" must stay about that programme.
         if (
             clarification_reply is None
             and not decision.blocked
             and _SERVICE_EXPLAIN_RE.search(text)
+            and not self._in_programme_context(conversation, text)
             and not (
                 document_context
                 and _doc_related_turn(conversation, document_context, text)
@@ -984,6 +1006,7 @@ class ChatService:
             clarification_reply is None
             and not decision.blocked
             and _PROGRAMMES_OVERVIEW_RE.search(text)
+            and not self._in_programme_context(conversation, text)
         ):
             clarification_reply = (
                 _PROGRAMMES_OVERVIEW_AR if language == "ar" else _PROGRAMMES_OVERVIEW_EN
@@ -2018,6 +2041,19 @@ class ChatService:
     async def wait_for_shadow(self) -> None:
         """Lets any shadow calls finish. For tests and clean shutdown."""
         await asyncio.gather(*self._shadow_tasks, return_exceptions=True)
+
+    def _in_programme_context(self, conversation: Conversation, text: str) -> bool:
+        """True when the conversation is inside the signature-programme flow
+        or the message names a specific programme — generic FAQs must not
+        hijack programme-specific questions."""
+        if conversation.case_facts.get("service_category") == "signature_programmes":
+            return True
+        if _PROGRAMME_NAME_RE.search(text):
+            return True
+        try:
+            return self.store.get_programme_enquiry_for_conversation(conversation.id) is not None
+        except Exception:
+            return False
 
     def _suggestions(self, language: str, conversation: Conversation, decision, plan) -> list[ChatAction]:
         if plan.decision_type == "sign_in_required":
