@@ -56,8 +56,9 @@ class Settings(BaseModel):
     groq_stt_language: str | None = None
     groq_tts_model_en: str = "canopylabs/orpheus-v1-english"
     groq_tts_model_ar: str = "canopylabs/orpheus-arabic-saudi"
-    groq_tts_voice_en: str = "austin"
-    groq_tts_voice_ar: str = "abdullah"
+    groq_tts_voice_en: str = "hannah"
+    groq_tts_voice_ar: str = "noura"
+    groq_tts_style_en: str = "warm"
 
     @property
     def missing_integrations(self) -> list[str]:
@@ -146,8 +147,9 @@ def load_settings() -> Settings:
             groq_stt_language=values.get("GROQ_STT_LANGUAGE") or None,
             groq_tts_model_en=values.get("GROQ_TTS_MODEL_EN", "canopylabs/orpheus-v1-english"),
             groq_tts_model_ar=values.get("GROQ_TTS_MODEL_AR", "canopylabs/orpheus-arabic-saudi"),
-            groq_tts_voice_en=values.get("GROQ_TTS_VOICE_EN", "austin"),
-            groq_tts_voice_ar=values.get("GROQ_TTS_VOICE_AR", "abdullah"),
+            groq_tts_voice_en=values.get("GROQ_TTS_VOICE_EN", "hannah"),
+            groq_tts_voice_ar=values.get("GROQ_TTS_VOICE_AR", "noura"),
+            groq_tts_style_en=values.get("GROQ_TTS_STYLE_EN", "warm"),
         )
         settings.validate_integrations()
         return settings

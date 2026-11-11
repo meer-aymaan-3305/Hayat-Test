@@ -8,6 +8,7 @@ synthesized — never raw model output or internal instructions.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import re
 import wave
@@ -106,6 +107,8 @@ class GroqPlayAITTS:
         self._model_ar = settings.groq_tts_model_ar
         self._voice_en = settings.groq_tts_voice_en
         self._voice_ar = settings.groq_tts_voice_ar
+        # Vocal direction for the English model only (the Arabic model ignores tags).
+        self._style_en = (settings.groq_tts_style_en or "").strip()
 
     async def synthesize(self, text: str, language: str) -> tuple[bytes, str]:
         if not self._key:
@@ -113,28 +116,32 @@ class GroqPlayAITTS:
         arabic = language == "ar"
         model = self._model_ar if arabic else self._model_en
         voice = self._voice_ar if arabic else self._voice_en
-        pieces = split_for_tts(text)
+        tag = f"[{self._style_en}] " if self._style_en and not arabic else ""
+        pieces = split_for_tts(text, limit=TTS_MAX_INPUT_CHARS - len(tag))
         if not pieces:
             raise SpeechError("There is no text to synthesize.")
         if len(pieces) > TTS_MAX_CHUNKS:
             raise SpeechInputTooLongError("This reply is too long to be read aloud.")
-        wavs: list[bytes] = []
+
+        async def speak(client: httpx.AsyncClient, piece: str) -> bytes:
+            res = await client.post(
+                f"{GROQ_BASE}/audio/speech",
+                headers={"Authorization": f"Bearer {self._key}"},
+                json={
+                    "model": model,
+                    "voice": voice,
+                    "input": f"{tag}{piece}",
+                    "response_format": "wav",
+                },
+            )
+            if res.status_code >= 400 or not res.content:
+                raise SpeechError(f"Speech synthesis failed ({res.status_code}).")
+            return res.content
+
         try:
+            # Pieces are independent, so they are spoken in parallel (order is kept).
             async with httpx.AsyncClient(timeout=30.0) as client:
-                for piece in pieces:
-                    res = await client.post(
-                        f"{GROQ_BASE}/audio/speech",
-                        headers={"Authorization": f"Bearer {self._key}"},
-                        json={
-                            "model": model,
-                            "voice": voice,
-                            "input": piece,
-                            "response_format": "wav",
-                        },
-                    )
-                    if res.status_code >= 400 or not res.content:
-                        raise SpeechError(f"Speech synthesis failed ({res.status_code}).")
-                    wavs.append(res.content)
+                wavs = list(await asyncio.gather(*(speak(client, piece) for piece in pieces)))
         except httpx.HTTPError as exc:
             raise SpeechError("Speech synthesis request failed.") from exc
         return join_wav(wavs), "audio/wav"
@@ -165,20 +172,44 @@ def split_for_tts(text: str, limit: int = TTS_MAX_INPUT_CHARS) -> list[str]:
     return [piece for piece in pieces if piece]
 
 
+def _pcm_and_format(part: bytes) -> tuple[bytes, tuple[int, int, int]]:
+    """PCM bytes and (channels, sample width, rate) of one WAV from the provider.
+
+    Groq streams its WAV with a placeholder length in the header (0xFFFFFFFF), which
+    breaks the standard reader when frames are counted. The audio is simply everything
+    after the "data" chunk header, so it is read directly (and clipped to the declared
+    size when that size is real)."""
+    try:
+        with wave.open(io.BytesIO(part), "rb") as reader:
+            fmt = (reader.getnchannels(), reader.getsampwidth(), reader.getframerate())
+    except (wave.Error, EOFError) as exc:
+        raise SpeechError("Speech synthesis returned invalid audio.") from exc
+    marker = part.find(b"data", 12)
+    if marker < 0 or len(part) < marker + 8:
+        raise SpeechError("Speech synthesis returned invalid audio.")
+    declared = int.from_bytes(part[marker + 4 : marker + 8], "little")
+    pcm = part[marker + 8 :]
+    if 0 < declared < len(pcm):
+        pcm = pcm[:declared]
+    return pcm, fmt
+
+
 def join_wav(parts: list[bytes]) -> bytes:
-    """Concatenate WAV files that share one audio format into a single WAV."""
-    if len(parts) == 1:
-        return parts[0]
+    """Concatenate WAV files that share one audio format into one well-formed WAV."""
     out = io.BytesIO()
+    fmt: tuple[int, int, int] | None = None
     try:
         with wave.open(out, "wb") as writer:
-            for index, part in enumerate(parts):
-                with wave.open(io.BytesIO(part), "rb") as reader:
-                    if index == 0:
-                        writer.setparams(reader.getparams())
-                    elif reader.getparams()[:3] != writer.getparams()[:3]:
-                        raise SpeechError("Speech synthesis returned mismatched audio.")
-                    writer.writeframes(reader.readframes(reader.getnframes()))
+            for part in parts:
+                pcm, part_fmt = _pcm_and_format(part)
+                if fmt is None:
+                    fmt = part_fmt
+                    writer.setnchannels(fmt[0])
+                    writer.setsampwidth(fmt[1])
+                    writer.setframerate(fmt[2])
+                elif part_fmt != fmt:
+                    raise SpeechError("Speech synthesis returned mismatched audio.")
+                writer.writeframes(pcm)
     except (wave.Error, EOFError) as exc:
         raise SpeechError("Speech synthesis returned invalid audio.") from exc
     return out.getvalue()

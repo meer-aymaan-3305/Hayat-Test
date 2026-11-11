@@ -103,6 +103,11 @@ st.session_state.locale = st.sidebar.selectbox(
     format_func=lambda value: "English" if value == "en" else "العربية",
 )
 
+st.sidebar.toggle(
+    "Read Hayat's replies aloud" if st.session_state.locale == "en" else "قراءة ردود حياة بصوت عالٍ",
+    key="read_aloud",
+)
+
 # Sidebar: Governance & Policy Information
 with st.sidebar.expander("Governance & Policy Guardrails", expanded=True):
     st.info("Role: Intake & Routing Concierge only (CP-2)")
@@ -260,6 +265,10 @@ with col_chat:
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.write(_clean_content(message["content"]))
+
+    if st.session_state.get("pending_audio"):
+        st.audio(st.session_state.pending_audio, format="audio/wav", autoplay=True)
+        st.session_state.pending_audio = None
 
     # Phone verification: appears when Hayat reaches the verification step.
     if st.session_state.get("next_action") == "verify_phone":
@@ -460,6 +469,30 @@ with col_details:
 # =============================================================================
 # Chat Input & Turn Execution
 # =============================================================================
+if st.session_state.conversation_id:
+    st.session_state.setdefault("mic_round", 0)
+    recording = st.audio_input(
+        "🎤 Speak to Hayat" if st.session_state.locale == "en" else "🎤 تحدّث مع حياة",
+        key=f"mic_{st.session_state.mic_round}",
+    )
+    if recording is not None:
+        transcribed = api.post(
+            f"{base_url}/v1/voice/transcribe",
+            headers=_headers(),
+            files={"file": ("voice.wav", recording.getvalue(), "audio/wav")},
+            data={"conversation_id": st.session_state.conversation_id},
+            timeout=60,
+        )
+        st.session_state.mic_round += 1  # a fresh recorder for the next message
+        if transcribed.ok and transcribed.json().get("transcript"):
+            st.session_state.pending_prompt = transcribed.json()["transcript"]
+            st.session_state.voice_turn = True
+            st.rerun()
+        elif transcribed.ok:
+            st.warning("I could not hear anything in that recording. Please try again.")
+        else:
+            st.error(f"Could not process the recording: {_validation_detail(transcribed)}")
+
 prompt = st.chat_input("Message Hayat" if st.session_state.locale == "en" else "اكتب رسالتك إلى حياة")
 prompt = prompt or st.session_state.pop("pending_prompt", None)
 
@@ -484,6 +517,19 @@ if prompt and st.session_state.conversation_id:
         st.session_state.messages.extend(
             [{"role": "user", "content": prompt}, {"role": "assistant", "content": clean_reply}]
         )
+        if st.session_state.pop("voice_turn", False) or st.session_state.get("read_aloud"):
+            message_id = (data.get("assistant_message") or {}).get("id")
+            if message_id:
+                spoken = api.post(
+                    f"{base_url}/v1/voice/synthesize",
+                    headers=_headers(),
+                    json={"conversation_id": st.session_state.conversation_id, "message_id": message_id},
+                    timeout=60,
+                )
+                if spoken.ok:
+                    st.session_state.pending_audio = spoken.content
+                else:
+                    st.toast(f"Voice reply unavailable: {_validation_detail(spoken)}")
         st.session_state.suggestions = data.get("suggested_actions", data.get("suggestions", []))
         st.session_state.consultation_progress = data.get("consultation_progress")
         st.session_state.next_action = data.get("next_action")

@@ -35,6 +35,16 @@ restart) and no real SMS is sent.
   redeploy to change it.
 - The app sleeps after a period of inactivity and restarts fresh (in-memory data is lost).
 
+## Voice
+- Tap the microphone above the message box and speak (English or Arabic); Hayat transcribes
+  with Groq `whisper-large-v3` (the most accurate Whisper model) and answers like a typed chat.
+- Turn on **Read Hayat's replies aloud** in the sidebar (replies to a spoken message are
+  always read aloud). English uses the Orpheus voice `hannah` with a warm style, Arabic uses
+  the Saudi Orpheus voice `noura`. Change them with `GROQ_TTS_VOICE_EN` / `GROQ_TTS_VOICE_AR`
+  (English: autumn, diana, hannah, austin, daniel, troy. Arabic: lulwa, noura, aisha,
+  abdullah, fahad, sultan).
+- The browser asks for microphone permission the first time.
+
 ## 5. Groq limits (important)
 On Groq's free tier the limits are per **organization**, not per key: about 200,000 tokens
 per day per model, and 7,000 input tokens per minute for `qwen3.8-27b`. One chat turn uses
