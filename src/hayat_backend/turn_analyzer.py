@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .config import Settings
+from .llm_compat import CompatError, OpenAICompatClient
 
 logger = logging.getLogger("hayat.turn_analyzer")
 
@@ -91,6 +92,9 @@ class TurnAnalyzer:
         self._client = AsyncGroq(api_key=settings.groq_api_key.get_secret_value(), max_retries=1)
         self._model = settings.groq_analysis_model
         self._timeout = settings.groq_analysis_timeout_seconds
+        from .llm import backup_client
+
+        self._backup: OpenAICompatClient | None = backup_client(settings)
 
     async def analyze(
         self,
@@ -125,8 +129,25 @@ class TurnAnalyzer:
             data = json.loads(response.choices[0].message.content or "{}")
         except Exception as exc:  # fail open: the rule-based path still works
             logger.warning("turn analysis unavailable: %s", type(exc).__name__)
-            return None
+            return await self._analyze_with_backup(payload)
         return parse_analysis(data)
+
+    async def _analyze_with_backup(self, payload: dict[str, Any]) -> TurnAnalysis | None:
+        if self._backup is None:
+            return None
+        try:
+            text, _ = await self._backup.chat(
+                [
+                    {"role": "system", "content": _SYSTEM},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ],
+                max_tokens=700, temperature=0, json_mode=True,
+            )
+            start, end = text.find("{"), text.rfind("}")
+            return parse_analysis(json.loads(text[start : end + 1]))
+        except (CompatError, ValueError):
+            logger.warning("backup turn analysis unavailable")
+            return None
 
 
 def parse_analysis(data: Any) -> TurnAnalysis | None:

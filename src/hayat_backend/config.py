@@ -29,6 +29,9 @@ class Settings(BaseModel):
     groq_timeout_seconds: float = Field(default=20.0, ge=1.0, le=120.0)
     groq_analysis_model: str = "qwen/qwen3.8-27b"
     groq_fallback_models: list[str] = Field(default_factory=list)
+    llm_fallback_base_url: str | None = None
+    llm_fallback_api_key: SecretStr | None = None
+    llm_fallback_model: str | None = None
     groq_analysis_timeout_seconds: float = Field(default=6.0, ge=1.0, le=60.0)
     supabase_url: str | None = None
     supabase_service_role_key: SecretStr | None = None
@@ -111,6 +114,9 @@ def load_settings() -> Settings:
             groq_max_tokens=values.get("GROQ_MAX_TOKENS", 160),
             groq_timeout_seconds=values.get("GROQ_TIMEOUT_SECONDS", 20.0),
             groq_analysis_model=values.get("GROQ_ANALYSIS_MODEL", "qwen/qwen3.8-27b"),
+            llm_fallback_base_url=values.get("LLM_FALLBACK_BASE_URL") or None,
+            llm_fallback_api_key=values.get("LLM_FALLBACK_API_KEY") or None,
+            llm_fallback_model=values.get("LLM_FALLBACK_MODEL") or None,
             groq_fallback_models=[
                 m.strip() for m in values.get(
                     "GROQ_FALLBACK_MODELS", "openai/gpt-oss-120b,openai/gpt-oss-20b"

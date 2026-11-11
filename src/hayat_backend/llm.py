@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Protocol
 
 from .config import Settings
+from .llm_compat import CompatError, OpenAICompatClient
 
 
 logger = logging.getLogger("hayat.llm")
@@ -74,24 +76,52 @@ class GroqChatModel:
         self._fallbacks = [
             m for m in self.settings.groq_fallback_models if m != self.settings.groq_model
         ]
+        # A model that just said "rate limited" is skipped for a short while.
+        self._cooldown_until: dict[str, float] = {}
+        self._backup = backup_client(self.settings)
         self._model = self.settings.groq_model
         self._temperature = self.settings.groq_temperature
         self._max_tokens = self.settings.groq_max_tokens
         self._timeout = self.settings.groq_timeout_seconds
 
     async def complete(self, messages: list[dict[str, str]]) -> str:
-        """Ask the primary model; if it is rate limited or down, try the fallbacks, so a
-        limit on one model never turns into canned replies for the visitor."""
-        from groq import APIError
+        """Ask the primary model; if it is rate limited or down, try the other Groq models
+        and then the backup provider, so one account's limit never silences the chat."""
+        from groq import APIError, RateLimitError
 
         last_error: Exception | None = None
+        now = time.monotonic()
         for model in [self._model, *self._fallbacks]:
+            if self._cooldown_until.get(model, 0) > now:
+                continue
             try:
                 return await self._complete_with(model, messages)
+            except RateLimitError as exc:
+                self._cooldown_until[model] = time.monotonic() + 60
+                last_error = exc
+                logger.warning("model %s is rate limited; skipping it for 60s", model)
             except (APIError, TimeoutError, LLMError) as exc:
                 last_error = exc
                 logger.warning("model %s failed (%s); trying the next one", model, type(exc).__name__)
+        if self._backup is not None:
+            try:
+                return await self._complete_backup(messages)
+            except CompatError as exc:
+                last_error = exc
+                logger.warning("backup model failed: %s", exc)
         raise LLMError("Configured language model request failed.") from last_error
+
+    async def _complete_backup(self, messages: list[dict[str, str]]) -> str:
+        budget = max(self._max_tokens, 1500)  # some providers think before answering
+        text = ""
+        for _attempt in range(2):
+            text, finish = await self._backup.chat(
+                messages, max_tokens=budget, temperature=self._temperature
+            )
+            if finish != "length":
+                return text
+            budget *= 2
+        return _trim_to_last_sentence(text)
 
     async def _complete_with(self, model: str, messages: list[dict[str, str]]) -> str:
         gpt_oss = model.startswith("openai/gpt-oss")
@@ -123,6 +153,18 @@ class GroqChatModel:
         if text:
             return _trim_to_last_sentence(text)
         raise LLMError("Groq returned an empty response.")
+
+
+def backup_client(settings: Settings) -> OpenAICompatClient | None:
+    """The backup provider, when LLM_FALLBACK_* is configured."""
+    if settings.llm_fallback_base_url and settings.llm_fallback_api_key and settings.llm_fallback_model:
+        return OpenAICompatClient(
+            settings.llm_fallback_base_url,
+            settings.llm_fallback_api_key.get_secret_value(),
+            settings.llm_fallback_model,
+            timeout=settings.groq_timeout_seconds,
+        )
+    return None
 
 
 def _trim_to_last_sentence(text: str) -> str:

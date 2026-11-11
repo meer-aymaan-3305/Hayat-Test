@@ -266,6 +266,12 @@ with col_chat:
         with st.chat_message(message["role"]):
             st.write(_clean_content(message["content"]))
 
+    if st.session_state.pop("ai_notice", False):
+        st.warning(
+            "Hayat's AI service is unreachable or rate limited right now (usually the Groq "
+            "usage limit). Try again in a minute, or ask the project owner to check the API key."
+        )
+
     if st.session_state.get("pending_audio"):
         st.audio(st.session_state.pending_audio, format="audio/wav", autoplay=True)
         st.session_state.pending_audio = None
@@ -533,6 +539,8 @@ if prompt and st.session_state.conversation_id:
         st.session_state.suggestions = data.get("suggested_actions", data.get("suggestions", []))
         st.session_state.consultation_progress = data.get("consultation_progress")
         st.session_state.next_action = data.get("next_action")
+        if data.get("ai_status") == "unavailable":
+            st.session_state.ai_notice = True
         st.session_state.profile_summary = data.get("persona_profile") or data.get("profile_summary", {})
         if data.get("coordinator_handoff"):
             st.session_state.coordinator_handoff = data["coordinator_handoff"]

@@ -798,10 +798,12 @@ def _merge_analysis(
 
     A pure question never records preferences (naming Germany in a question is not a
     destination choice). The model's cleaner values replace slot-filled raw text."""
-    if analysis.intent == "question":
+    if analysis.intent in {"question", "smalltalk", "off_topic", "emotional", "wants_human"}:
+        keep_diagnosis = analysis.intent == "question"
         facts = [
             f for f in facts
-            if f.field_name in _CONTACT_FIELDS or f.field_name == "condition_context_for_advisor"
+            if f.field_name in _CONTACT_FIELDS
+            or (keep_diagnosis and f.field_name == "condition_context_for_advisor")
         ]
     # A raw reply stored under the planned field is only right if the model agrees the
     # visitor answered that question (the assistant may have asked something else).
@@ -1338,7 +1340,12 @@ class ChatService:
                 ])
 
         # Extract facts with conversational context
-        all_facts = self._extract_facts(text, user_message.id, conversation, pending_field)
+        # Without the model's reading of the turn we cannot tell an answer from chit chat,
+        # so a raw reply is never stored as the answer to the pending question.
+        all_facts = self._extract_facts(
+            text, user_message.id, conversation, pending_field,
+            slot_fill=not (self.analyzer is not None and analysis is None),
+        )
         all_facts = self._skip_if_stuck(conversation, pending_field, all_facts, user_message.id)
         if analysis is not None:
             all_facts = _merge_analysis(all_facts, analysis, user_message.id, conversation, pending_field)
@@ -1751,9 +1758,9 @@ class ChatService:
                 # Every model failed. Say so honestly instead of a canned reply that
                 # sounds relevant but is not; the flow's own question is still appended.
                 reply = (
-                    "عذراً، أواجه مشكلة بسيطة الآن وأحتاج لحظة."
+                    "عذراً، لا أستطيع الوصول إلى خدمة الذكاء الاصطناعي الآن. يرجى المحاولة بعد دقيقة."
                     if language == "ar"
-                    else "Sorry, I'm having a little trouble right now, but I've noted your message."
+                    else "Sorry, I can't reach my AI service right now. Please try again in a minute."
                 )
             elif recall:
                 reply = recall
@@ -1844,7 +1851,9 @@ class ChatService:
             planned = plan
             if language == "ar" and plan.question_text in ARABIC_QUESTIONS:
                 planned = replace(plan, question_text=ARABIC_QUESTIONS[plan.question_text])
-            if not plan.answer_first:
+            if model_outage:
+                pass  # say only that we are down; never push the flow forward
+            elif not plan.answer_first:
                 # On answer-first turns the model decides whether the moment is right
                 # to return to the flow; it is never forced.
                 reply = append_planned_question(reply, planned)
@@ -1940,6 +1949,7 @@ class ChatService:
             "coordinator_handoff": handoff,
             "programme_enquiry": programme_enquiry,
             "service_category": "international_medical_travel",
+            "ai_status": "unavailable" if model_outage else "ok",
         }
         result["suggested_actions"] = result["suggestions"]
         self.store.cache_chat(conversation.id, client_message_id, result)
@@ -2085,6 +2095,7 @@ class ChatService:
         message_id: Any,
         conversation: Conversation | None = None,
         pending_field: str | None = None,
+        slot_fill: bool = True,
     ) -> list[FactValue]:
         # Normalise Arabic-Indic (٠-٩) and Extended Arabic-Indic (۰-۹) digits
         # so all downstream patterns work on a single digit alphabet.
@@ -2517,7 +2528,8 @@ class ChatService:
         # reply to it is the answer for that field. Questions and long messages are
         # never treated as answers.
         if (
-            pending_field in _SLOT_FIELDS
+            slot_fill
+            and pending_field in _SLOT_FIELDS
             and not any(f.field_name == pending_field for f in updates)
             and (pending_field not in _CORE_SLOTS or get_settings().extended_intake)
         ):

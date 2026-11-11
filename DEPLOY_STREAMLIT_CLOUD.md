@@ -52,6 +52,17 @@ roughly 2-4K tokens, so a team testing together will hit the limit quickly. When
 limited Hayat fails over to the next in `GROQ_FALLBACK_MODELS`; when all are limited it
 tells the visitor it is having trouble. For real team testing, upgrade to Groq Dev Tier.
 
+### Backup AI provider (fixes "I can't reach my AI service")
+Groq's free quota is shared by the whole organization and runs out. Add a second provider and
+Hayat switches to it automatically. Get a free Gemini key at https://aistudio.google.com/apikey
+and add to the secrets:
+```
+LLM_FALLBACK_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+LLM_FALLBACK_API_KEY = "your-gemini-key"
+LLM_FALLBACK_MODEL = "gemini-2.5-flash"
+```
+Any OpenAI-compatible service works (OpenRouter, OpenAI, ...).
+
 ## 6. Optional: keep conversations in Supabase
 Set `USE_SUPABASE = "true"`, `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in the secrets.
 Use a **staging** project, not production.

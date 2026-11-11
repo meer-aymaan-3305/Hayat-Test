@@ -258,7 +258,7 @@ def test_a_rate_limited_model_fails_over_instead_of_failing_the_turn():
     assert tried == ["primary-model", "backup-model"]
 
 
-def test_total_model_outage_is_honest_and_keeps_the_flow_moving():
+def test_total_model_outage_is_honest_and_does_not_advance_the_flow():
     from hayat_backend.llm import LLMError
 
     class DownModel:
@@ -274,7 +274,44 @@ def test_total_model_outage_is_honest_and_keeps_the_flow_moving():
     service, _, _, conversation = _service(script)
     service.model = DownModel()
     result = _say(service, conversation, "I want knee surgery")
-    assert "having a little trouble" in result["reply"]
+    assert "can't reach my AI service" in result["reply"]
+    assert "noted" not in result["reply"].lower()
+    assert "destination" not in result["reply"].lower()  # no flow question bolted on
+    assert result["ai_status"] == "unavailable"
     assert "interested in knee surgery treatment" not in result["reply"]
-    assert result["follow_up_target"] == "destination_preference"
-    assert "destination" in result["reply"].lower()
+
+
+def test_chit_chat_is_never_saved_as_the_answer_to_the_pending_question():
+    # The reported bug: while the AI was down, "how are you hayat" became the diagnosis.
+    script = {
+        "I want knee surgery": TurnAnalysis(
+            intent="answering", category="medical_treatment",
+            facts={"procedure_or_service": "knee surgery"},
+        ),
+        "Germany": TurnAnalysis(intent="answering", facts={"destination_preference": "Germany"}),
+        "next month": TurnAnalysis(intent="answering", facts={"preferred_timing": "next month"}),
+        "how are you hayat": TurnAnalysis(intent="smalltalk"),
+    }
+    service, _, _, conversation = _service(script)
+    for text in ["I want knee surgery", "Germany", "next month"]:
+        _say(service, conversation, text)
+    result = _say(service, conversation, "how are you hayat")
+    assert "condition_context_for_advisor" not in conversation.case_facts
+    assert result["follow_up_target"] == "condition_context_for_advisor"  # still the same step
+
+
+def test_without_the_analyzer_a_raw_reply_is_not_stored_as_an_answer():
+    script = {
+        "I want knee surgery": TurnAnalysis(
+            intent="answering", category="medical_treatment",
+            facts={"procedure_or_service": "knee surgery"},
+        ),
+        "Germany": TurnAnalysis(intent="answering", facts={"destination_preference": "Germany"}),
+        "next month": TurnAnalysis(intent="answering", facts={"preferred_timing": "next month"}),
+    }
+    service, _, _, conversation = _service(script)
+    for text in ["I want knee surgery", "Germany", "next month"]:
+        _say(service, conversation, text)
+    # The analyzer is configured but returns nothing (rate limited): fail safe.
+    _say(service, conversation, "Hey Hayat, how are you?")
+    assert "condition_context_for_advisor" not in conversation.case_facts
