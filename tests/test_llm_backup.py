@@ -83,3 +83,11 @@ def test_a_rate_limited_model_is_skipped_for_a_while():
     assert asyncio.run(model.complete([])) == "Second model answer."
     assert asyncio.run(model.complete([])) == "Second model answer."
     assert tried == ["primary", "second", "second"]  # primary was not retried right away
+
+
+def test_team_password_ignores_spaces_and_case():
+    from hayat_backend.cloud_bootstrap import password_ok
+
+    assert password_ok("  Hayat-Team-2026 ", "hayat-team-2026")
+    assert not password_ok("hayat-team-2027", "hayat-team-2026")
+    assert not password_ok("anything", "")

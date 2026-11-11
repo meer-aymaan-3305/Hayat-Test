@@ -36,9 +36,11 @@ if expected_password and not st.session_state.get("team_access_ok"):
     st.title("Hayat team test")
     with st.form("team_login"):
         entered = st.text_input("Team password", type="password")
-        if st.form_submit_button("Enter") and password_ok(entered, expected_password):
-            st.session_state.team_access_ok = True
-            st.rerun()
+        if st.form_submit_button("Enter"):
+            if password_ok(entered, expected_password):
+                st.session_state.team_access_ok = True
+                st.rerun()
+            st.error("That password is not right. Spaces and capital letters do not matter.")
     st.caption("Ask the project owner for the team password.")
     st.stop()
 

@@ -56,6 +56,8 @@ def apply_secrets(streamlit_secrets: Mapping[str, Any] | None) -> None:
 
 
 def password_ok(entered: str, expected: str) -> bool:
+    """Compare ignoring surrounding spaces and letter case (easy to mistype on a phone)."""
+    entered, expected = entered.strip().lower(), expected.strip().lower()
     return bool(expected) and hmac.compare_digest(entered.encode(), expected.encode())
 
 
