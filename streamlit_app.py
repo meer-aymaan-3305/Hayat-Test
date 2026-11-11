@@ -108,6 +108,15 @@ st.sidebar.toggle(
     key="read_aloud",
 )
 
+if os.getenv("HAYAT_CLOUD") == "1":
+    with st.sidebar.expander("AI connection check"):
+        if st.button("Check now"):
+            from hayat_backend.cloud_bootstrap import check_ai_connection
+
+            with st.spinner("Testing models…"):
+                for label, ok, detail in check_ai_connection():
+                    st.write(f"{'✅' if ok else '❌'} {label}: {detail}")
+
 # Sidebar: Governance & Policy Information
 with st.sidebar.expander("Governance & Policy Guardrails", expanded=True):
     st.info("Role: Intake & Routing Concierge only (CP-2)")

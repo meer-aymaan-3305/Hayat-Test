@@ -42,5 +42,6 @@ if expected_password and not st.session_state.get("team_access_ok"):
     st.caption("Ask the project owner for the team password.")
     st.stop()
 
+os.environ["HAYAT_CLOUD"] = "1"
 os.environ["HAYAT_API_URL"] = _backend_url()
 runpy.run_path(str(ROOT / "streamlit_app.py"), run_name="__main__")

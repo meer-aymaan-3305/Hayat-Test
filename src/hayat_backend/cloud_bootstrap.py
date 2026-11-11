@@ -124,3 +124,46 @@ def start_embedded_backend(app_root: Path) -> str:
         except httpx.HTTPError:
             time.sleep(0.3)
     raise RuntimeError("The embedded Hayat API did not start in time.")
+
+
+def check_ai_connection() -> list[tuple[str, bool, str]]:
+    """Try each configured model once. Returns (label, ok, detail) rows for the sidebar."""
+    from groq import Groq
+
+    from .config import get_settings
+    from .llm import backup_client
+
+    settings = get_settings()
+    rows: list[tuple[str, bool, str]] = []
+    if not settings.groq_api_key:
+        return [("Groq key", False, "GROQ_API_KEY is not set")]
+    key = settings.groq_api_key.get_secret_value()
+    rows.append(("Groq key in use", True, f"{key[:4]}...{key[-4:]}"))
+    client = Groq(api_key=key, max_retries=0, timeout=15)
+    models = [settings.groq_model, settings.groq_analysis_model, *settings.groq_fallback_models]
+    for model in dict.fromkeys(models):
+        try:
+            client.chat.completions.create(
+                model=model, messages=[{"role": "user", "content": "hi"}], max_tokens=5
+            )
+            rows.append((model, True, "working"))
+        except Exception as exc:
+            text = str(exc)
+            reason = (
+                "rate limited (quota used up)" if "429" in text or "Rate limit" in text
+                else "invalid API key" if "401" in text or "invalid_api_key" in text
+                else type(exc).__name__
+            )
+            rows.append((model, False, reason))
+    backup = backup_client(settings)
+    if backup is None:
+        rows.append(("Backup provider", False, "not configured (LLM_FALLBACK_*)"))
+    else:
+        import asyncio
+
+        try:
+            asyncio.run(backup.chat([{"role": "user", "content": "hi"}], max_tokens=20))
+            rows.append(("Backup provider", True, "working"))
+        except Exception as exc:
+            rows.append(("Backup provider", False, str(exc)[:80]))
+    return rows
