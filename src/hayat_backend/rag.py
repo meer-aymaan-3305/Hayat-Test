@@ -6,8 +6,30 @@ It does not ingest arbitrary user uploads or unvetted external sources.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
+import math
 import re
+
+_MIN_RELEVANCE = 1.0
+
+
+def _tokenize(text: str) -> list[str]:
+    return [w.lower() for w in re.findall(r"[\w'-]+", text) if len(w) > 1]
+
+
+def _stem(word: str) -> str:
+    """Very light English suffix stripping so 'programmes' matches 'programme'."""
+    if not word.isascii() or len(word) < 5:
+        return word
+    for suffix in ("ing", "ed", "es", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            return word[: -len(suffix)]
+    return word
+
+
+def _term_counts(text: str) -> Counter[str]:
+    return Counter(_stem(t) for t in _tokenize(text))
 
 
 @dataclass(frozen=True)
@@ -278,22 +300,33 @@ class InMemoryRetriever:
             "من", "في", "على", "إلى", "عن", "مع", "هل", "ما", "ماذا", "كيف", "أين",
             "متى", "أنا", "أريد", "ممكن", "يرجى", "لو", "سمحت",
         }
-        tokens = [w.lower() for w in re.findall(r"[\w'-]+", query) if len(w) > 1]
-        meaningful_terms = [t for t in tokens if t not in stopwords] or tokens
+        tokens = _tokenize(query)
+        meaningful_terms = {_stem(t) for t in tokens if t not in stopwords} or {
+            _stem(t) for t in tokens
+        }
+
+        active = [c for c in self._chunks if c.approved]
+        chunk_terms = [_term_counts(c.text) for c in active]
+        n_docs = max(len(active), 1)
+        avg_len = (sum(sum(tc.values()) for tc in chunk_terms) / n_docs) or 1.0
 
         scored: list[tuple[float, KnowledgeChunk]] = []
         lower_query = query.lower()
 
-        for chunk in self._chunks:
-            if not chunk.approved:
-                continue
+        for chunk, counts in zip(active, chunk_terms):
             chunk_lower = chunk.text.lower()
             score = 0.0
 
-            # Direct phrase overlap bonuses
+            # BM25 over whole (lightly stemmed) words. Replaces raw substring
+            # matching, which let short fragments match almost any chunk.
+            doc_len = sum(counts.values()) or 1
             for term in meaningful_terms:
-                if term in chunk_lower:
-                    score += 1.5
+                tf = counts.get(term, 0)
+                if not tf:
+                    continue
+                df = sum(1 for tc in chunk_terms if term in tc)
+                idf = math.log(1 + (n_docs - df + 0.5) / (df + 0.5))
+                score += 2.2 * idf * (tf * 2.2) / (tf + 1.2 * (0.25 + 0.75 * doc_len / avg_len))
 
             # Keyword combination signals
             if "destination" in lower_query or "وجه" in lower_query or "compare" in lower_query or "مقارن" in lower_query:
@@ -323,7 +356,7 @@ class InMemoryRetriever:
                 if "pricing & customisation" in chunk_lower or "individually curated" in chunk_lower:
                     score += 5.0
 
-            if score > 0.0:
+            if score >= _MIN_RELEVANCE:
                 scored.append((score, chunk))
 
         scored.sort(key=lambda item: item[0], reverse=True)

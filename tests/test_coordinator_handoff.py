@@ -70,7 +70,7 @@ def test_initial_greeting_and_intent_classification():
     # Initial greeting via conversation endpoint
     msgs = client.get(f"/v1/conversations/{cid}/messages", headers=headers).json()["messages"]
     assert len(msgs) == 1
-    assert msgs[0]["content"].startswith("Welcome! I'm Hayat")
+    assert "I'm Hayat" in msgs[0]["content"]
 
     # Intent 1: Medical Treatment
     r1 = client.post("/v1/chat", headers=headers, json={"conversation_id": cid, "message": "I am interested in medical treatment."}).json()
@@ -82,7 +82,8 @@ def test_initial_greeting_and_intent_classification():
     res_ar = client.post("/v1/sessions/guest", json={"locale": "ar"}).json()
     c_ar = client.post("/v1/conversations", headers={"X-Session-Token": res_ar["session_token"]}, json={"guest_session_id": res_ar["session_id"]}).json()
     msgs_ar = client.get(f"/v1/conversations/{c_ar['id']}/messages", headers={"X-Session-ID": res_ar["session_id"], "X-Session-Token": res_ar["session_token"]}).json()["messages"]
-    assert msgs_ar[0]["content"].startswith("مرحباً! أنا حياة")
+    assert msgs_ar[0]["content"].startswith("مرحباً")
+    assert "أنا حياة" in msgs_ar[0]["content"]
 
 
 def test_multifield_extraction_and_contextual_followup():

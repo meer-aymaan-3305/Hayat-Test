@@ -39,7 +39,7 @@ def test_guest_greeting_and_full_pending_consultation_export():
         f"/v1/conversations/{conversation['id']}/messages", headers=auth
     ).json()["messages"][0]
     assert greeting["role"] == "assistant"
-    assert greeting["content"].startswith("Welcome! I'm Hayat")
+    assert "I'm Hayat" in greeting["content"]
 
     lead = client.post(
         f"/v1/leads?conversation_id={conversation['id']}",

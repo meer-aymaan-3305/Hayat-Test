@@ -27,6 +27,9 @@ class Settings(BaseModel):
     groq_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     groq_max_tokens: int = Field(default=160, ge=1, le=4096)
     groq_timeout_seconds: float = Field(default=20.0, ge=1.0, le=120.0)
+    groq_analysis_model: str = "qwen/qwen3.8-27b"
+    groq_fallback_models: list[str] = Field(default_factory=list)
+    groq_analysis_timeout_seconds: float = Field(default=6.0, ge=1.0, le=60.0)
     supabase_url: str | None = None
     supabase_service_role_key: SecretStr | None = None
     allowed_origins: list[str] = Field(default_factory=list)
@@ -40,6 +43,9 @@ class Settings(BaseModel):
     policy_addendum_1_1_approved: bool = False
     medical_ai_replies: bool = False
     medical_ai_shadow: bool = False
+    extended_intake: bool = False
+    dev_fake_otp: bool = False
+    collect_diagnosis: bool = False
     trawellcare_crm_webhook_url: str | None = None
     knowledge_dir: str = "data/knowledge"
     attachments_dir: str = "data/attachments"
@@ -103,6 +109,13 @@ def load_settings() -> Settings:
             groq_temperature=values.get("GROQ_TEMPERATURE", 0.2),
             groq_max_tokens=values.get("GROQ_MAX_TOKENS", 160),
             groq_timeout_seconds=values.get("GROQ_TIMEOUT_SECONDS", 20.0),
+            groq_analysis_model=values.get("GROQ_ANALYSIS_MODEL", "qwen/qwen3.8-27b"),
+            groq_fallback_models=[
+                m.strip() for m in values.get(
+                    "GROQ_FALLBACK_MODELS", "openai/gpt-oss-120b,openai/gpt-oss-20b"
+                ).split(",") if m.strip()
+            ],
+            groq_analysis_timeout_seconds=values.get("GROQ_ANALYSIS_TIMEOUT_SECONDS", 6.0),
             supabase_url=values.get("SUPABASE_URL"),
             supabase_service_role_key=values.get("SUPABASE_SERVICE_ROLE_KEY"),
             allowed_origins=[
@@ -120,6 +133,9 @@ def load_settings() -> Settings:
             policy_addendum_1_1_approved=values.get("POLICY_ADDENDUM_1_1_APPROVED", "false").lower() in ("true", "1", "yes"),
             medical_ai_replies=values.get("MEDICAL_AI_REPLIES", "false").lower() in ("true", "1", "yes"),
             medical_ai_shadow=values.get("MEDICAL_AI_SHADOW", "false").lower() in ("true", "1", "yes"),
+            dev_fake_otp=values.get("DEV_FAKE_OTP", "false").lower() in ("true", "1", "yes"),
+            extended_intake=values.get("EXTENDED_INTAKE", "false").lower() in ("true", "1", "yes"),
+            collect_diagnosis=values.get("COLLECT_DIAGNOSIS", "false").lower() in ("true", "1", "yes"),
             trawellcare_crm_webhook_url=values.get("TRAWELLCARE_CRM_WEBHOOK_URL"),
             knowledge_dir=values.get("KNOWLEDGE_DIR", "data/knowledge"),
             attachments_dir=values.get("ATTACHMENTS_DIR", "data/attachments"),

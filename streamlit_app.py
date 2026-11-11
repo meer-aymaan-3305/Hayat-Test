@@ -175,7 +175,10 @@ if st.sidebar.button("Start New Concierge Session", use_container_width=True):
         st.session_state.token = data["session_token"]
         conversation = api.post(
             f"{base_url}/v1/conversations",
-            headers={"X-Session-Token": st.session_state.token},
+            headers={
+                "X-Session-Token": st.session_state.token,
+                "X-Client-Hour": str(datetime.now().hour),
+            },
             json={"guest_session_id": st.session_state.session_id},
             timeout=10,
         )
@@ -257,6 +260,49 @@ with col_chat:
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.write(_clean_content(message["content"]))
+
+    # Phone verification: appears when Hayat reaches the verification step.
+    if st.session_state.get("next_action") == "verify_phone":
+        _facts = _fact_values(st.session_state.get("profile_summary"))
+        _phone = str(_facts.get("phone_number") or "")
+        with st.container(border=True):
+            st.markdown("**Verify your phone number**")
+            st.caption(
+                f"We will text a one time code to {_phone or 'your number'}. "
+                "(Local testing: the code is 123456 and no SMS is sent.)"
+            )
+            if st.button("Send code", disabled=not _phone):
+                _r = api.post(
+                    f"{base_url}/v1/consultations/otp/start",
+                    headers=_headers(),
+                    json={"conversation_id": st.session_state.conversation_id, "phone_number": _phone},
+                    timeout=15,
+                )
+                if _r.ok:
+                    st.session_state.otp_challenge_id = _r.json()["challenge_id"]
+                    st.success("Code sent.")
+                else:
+                    st.error(f"Could not send the code: {_validation_detail(_r)}")
+            if st.session_state.get("otp_challenge_id"):
+                _code = st.text_input("Enter the code", max_chars=10, key="otp_code_input")
+                if st.button("Verify"):
+                    _r = api.post(
+                        f"{base_url}/v1/consultations/otp/verify",
+                        headers=_headers(),
+                        json={
+                            "conversation_id": st.session_state.conversation_id,
+                            "challenge_id": st.session_state.otp_challenge_id,
+                            "code": _code,
+                        },
+                        timeout=15,
+                    )
+                    if _r.ok:
+                        st.session_state.otp_challenge_id = None
+                        st.session_state.next_action = None
+                        st.session_state.pending_prompt = "I have verified my number"
+                        st.rerun()
+                    else:
+                        st.error(f"Verification failed: {_validation_detail(_r)}")
 
     # Clean Suggested Next Steps
     if st.session_state.suggestions:
@@ -440,6 +486,7 @@ if prompt and st.session_state.conversation_id:
         )
         st.session_state.suggestions = data.get("suggested_actions", data.get("suggestions", []))
         st.session_state.consultation_progress = data.get("consultation_progress")
+        st.session_state.next_action = data.get("next_action")
         st.session_state.profile_summary = data.get("persona_profile") or data.get("profile_summary", {})
         if data.get("coordinator_handoff"):
             st.session_state.coordinator_handoff = data["coordinator_handoff"]

@@ -25,6 +25,7 @@ from .llm import create_chat_model
 from .memory_store import MemoryStore
 from .supabase_store import SupabaseStore, create_store
 from .otp import (
+    SyntheticOTPProvider,
     FirebaseAdminTokenVerifier, FirebaseOTPProvider, OTPProvider, OTPProviderError,
     UnavailableOTPProvider,
 )
@@ -193,6 +194,11 @@ def create_app(
         otp = otp_provider
     elif settings.firebase_api_key:
         otp = FirebaseOTPProvider(settings)
+    elif settings.dev_fake_otp and settings.app_env in {"development", "test"}:
+        # Local testing only (explicit DEV_FAKE_OTP=true): no SMS is sent and the code is always 123456.
+        # Staging and production never reach this branch and fail closed.
+        logger.warning("No SMS provider configured: using the local test OTP (code 123456).")
+        otp = SyntheticOTPProvider()
     else:
         otp = UnavailableOTPProvider()
     firebase_verifier = None
@@ -305,6 +311,7 @@ def create_app(
     async def create_conversation(
         payload: ConversationCreate,
         x_session_token: str = Header(..., alias="X-Session-Token"),
+        x_client_hour: int | None = Header(default=None, alias="X-Client-Hour"),
     ):
         try:
             store.authorize(payload.guest_session_id, x_session_token)
@@ -313,7 +320,7 @@ def create_app(
         conversation = store.create_conversation(payload.guest_session_id)
         session = store.get_session(payload.guest_session_id)
         greeting_message = store.append_message(
-            conversation, "assistant", greeting(session.locale), session.locale
+            conversation, "assistant", greeting(session.locale, x_client_hour), session.locale
         )
         actions = chat_service.initial_actions(session.locale)
         return {
@@ -374,8 +381,12 @@ def create_app(
         x_reply_language: Literal["en", "ar"] | None = Header(default=None, alias="X-Reply-Language"),
     ):
         try:
-            store.authorize(x_session_id, x_session_token)
-            conversation = store.get_conversation(x_session_id, payload.conversation_id)
+            # Authorization and the conversation load are independent reads:
+            # run them side by side; access is denied if either refuses.
+            _, conversation = await asyncio.gather(
+                asyncio.to_thread(store.authorize, x_session_id, x_session_token),
+                asyncio.to_thread(store.get_conversation, x_session_id, payload.conversation_id),
+            )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail="Conversation access denied.") from exc
         try:

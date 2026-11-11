@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
 from typing import Any
 
@@ -16,6 +16,7 @@ class PlannedStep:
     target_field: str | None = None
     resume_goal: str | None = None
     clarify_attempts: int = 0
+    answer_first: bool = False
 
 
 _CONSULTATION_INTENT = re.compile(
@@ -120,7 +121,28 @@ def clarify_attempts(conversation: Any) -> int:
 class QuestionPlanner:
     """Choose at most one concise question while backend code remains authoritative."""
 
-    def __init__(self) -> None:
+    # Extra intake questions asked, one at a time, when extended intake is on.
+    EXTENDED_MEDICAL = (
+        ("condition_context_for_advisor", "existing diagnosis"),
+        ("budget_range", "budget"),
+        ("travellers_count", "number of travellers"),
+        ("medical_reports_available", "medical reports"),
+        ("current_country", "country of residence"),
+    )
+    EXTENDED_WELLNESS = (
+        ("budget_range", "budget"),
+        ("travellers_count", "number of travellers"),
+        ("accommodation_preference", "accommodation preference"),
+    )
+    # Asked after the number is verified; skippable.
+    OPTIONAL_CONTACT = (
+        ("email", "email"),
+        ("callback_time", "callback time"),
+    )
+
+    def __init__(self, extended: bool = False, collect_diagnosis: bool = False) -> None:
+        self.extended = extended
+        self.collect_diagnosis = collect_diagnosis
         self.contact_fields = (
             ("name", "name"),
             ("phone_number", "phone number"),
@@ -134,6 +156,40 @@ class QuestionPlanner:
         decision: Any,
         progress: Any,
         visitor: str | None = None,
+        intent: str | None = None,
+        submitted: bool = False,
+    ) -> PlannedStep:
+        """Pick the next step. When the visitor asked or shared something rather than
+        simply answering, the step is flagged answer_first so the reply deals with that
+        before (and only if natural) returning to the planned question."""
+        if self.extended and submitted and not decision.escalation_required:
+            # The enquiry is already with the team. Nothing is left to collect or submit,
+            # so never loop on "shall I submit?": just help with whatever they need.
+            return PlannedStep(
+                "post_submission",
+                "The enquiry was submitted; help with changes, questions or new requests.",
+            )
+        step = self._plan_core(
+            text=text, conversation=conversation, decision=decision,
+            progress=progress, visitor=visitor, intent=intent,
+        )
+        if (
+            self.extended
+            and intent in {"question", "mixed", "emotional", "smalltalk", "off_topic", "new_request"}
+            and step.decision_type not in {"escalate"}
+        ):
+            return replace(step, answer_first=True)
+        return step
+
+    def _plan_core(
+        self,
+        *,
+        text: str,
+        conversation: Any,
+        decision: Any,
+        progress: Any,
+        visitor: str | None = None,
+        intent: str | None = None,
     ) -> PlannedStep:
         if decision.escalation_required:
             return PlannedStep("escalate", "Safety or policy escalation takes priority.")
@@ -141,11 +197,18 @@ class QuestionPlanner:
         category = self._category(conversation)
         consultation_requested = bool(_CONSULTATION_INTENT.search(text))
         question_requested = bool(_QUESTION_INTENT.search(text))
+        wants_human = self.extended and intent == "wants_human"
+        if self.extended and intent is not None:
+            # The model's reading of the turn beats keyword guessing.
+            consultation_requested = wants_human
+            question_requested = intent in {"question", "mixed", "off_topic"}
         _msgs = getattr(conversation, "messages", [])
         user_turns = sum(1 for m in _msgs if m.role == "user")
 
         # Check if all clinical/wellness details are present
         missing_funnel = self._first_missing(conversation, category, include_contact=False)
+        if wants_human:
+            missing_funnel = None  # they want a person now: go straight to contact
         has_contact = (
             self._known(conversation, "phone_number")
             and (self._known(conversation, "name") or self._known(conversation, "contact"))
@@ -154,6 +217,7 @@ class QuestionPlanner:
         # If user asks for a consultation, provided contact details, or is in submission path
         if (
             consultation_requested
+            or (self.extended and category and not missing_funnel)
             or has_contact
             or conversation.state in {
                 "awaiting_verification", "awaiting_consent", "ready_for_submission", "offering_consultation"
@@ -195,6 +259,16 @@ class QuestionPlanner:
                     ),
                     target_field="phone_number",
                 )
+            if self.extended:
+                for field, label in self.OPTIONAL_CONTACT:
+                    if not self._known(conversation, field):
+                        return PlannedStep(
+                            "collect_detail",
+                            "Optional contact detail for the coordinator.",
+                            question_goal=label,
+                            question_text=self._question_for(field, category),
+                            target_field=field,
+                        )
             if not progress.consent_granted:
                 return PlannedStep(
                     "request_consent",
@@ -236,7 +310,8 @@ class QuestionPlanner:
                     target_field=field,
                 )
         elif (
-            self._has_ambiguous_category(text)
+            self.extended
+            or self._has_ambiguous_category(text)
             or _AMBIGUOUS_HINT_RE.search(text)
             or (
                 self._journey_hint(text)
@@ -316,6 +391,13 @@ class QuestionPlanner:
                 ("destination_preference", "destination preference"),
                 ("preferred_timing", "preferred timeframe"),
             ])
+        if self.extended and category == "medical_treatment":
+            fields.extend(
+                f for f in self.EXTENDED_MEDICAL
+                if self.collect_diagnosis or f[0] != "condition_context_for_advisor"
+            )
+        elif self.extended and category == "wellness":
+            fields.extend(self.EXTENDED_WELLNESS)
         if include_contact:
             fields.extend(self.contact_fields)
         for field, label in fields:
@@ -400,10 +482,29 @@ class QuestionPlanner:
 
     def current_pending_field(self, conversation: Any) -> str | None:
         category = self._category(conversation)
+        if self.extended:
+            last = next(
+                (m.content for m in reversed(getattr(conversation, "messages", []))
+                 if m.role == "assistant"),
+                "",
+            )
+            if not self._known(conversation, "name") and re.search(
+                r"(?:know your name|your name\?|what name|اسمك)", last, re.I
+            ):
+                return "name"
         if not category:
             return "customer_category"
         missing = self._first_missing(conversation, category, include_contact=False)
-        return missing[0] if missing else None
+        if missing:
+            return missing[0]
+        if self.extended:
+            nxt = self._first_missing_contact(conversation)
+            if nxt:
+                return nxt[0]
+            for field, _ in self.OPTIONAL_CONTACT:
+                if not self._known(conversation, field):
+                    return field
+        return None
 
     @staticmethod
     def _question_for(field: str, category: str | None) -> str:
@@ -414,6 +515,14 @@ class QuestionPlanner:
             "wellness_programme_or_goal": "Which wellness programme or goal interests you?",
             "destination_preference": "Which destination would you prefer, or would you like help exploring available destinations?",
             "preferred_timing": "What timeframe would suit you best?",
+            "budget_range": "Do you have a rough budget in mind? A range is perfectly fine 😊",
+            "travellers_count": "Will you be travelling on your own, or is anyone joining you?",
+            "accommodation_preference": "Do you have any preferences for where you would like to stay?",
+            "condition_context_for_advisor": "If you are comfortable sharing, is there an existing diagnosis our Medical Advisor should know about?",
+            "medical_reports_available": "Do you have any medical reports or records handy?",
+            "current_country": "Which country are you based in at the moment?",
+            "email": "Would you like to share an email address too? You can skip this if you prefer.",
+            "callback_time": "When would be a good time for our coordinator to reach you?",
         }
         return questions.get(field, "How may I help with your consultation details?")
 

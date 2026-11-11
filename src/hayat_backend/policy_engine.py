@@ -374,8 +374,14 @@ class PolicyEnforcementEngine:
         language: str = "en",
         is_locked_emergency: bool = False,
         is_locked_crisis: bool = False,
+        allow_clinical_context: bool = False,
     ) -> PolicyDecision:
-        """Validate every inbound user message deterministically."""
+        """Validate every inbound user message deterministically.
+
+        allow_clinical_context is set only while the visitor is answering the
+        explicit "existing diagnosis" question (owner-approved, COLLECT_DIAGNOSIS).
+        It relaxes the unsolicited-clinical-detail rule (DP-5) for that one turn;
+        emergency, self-harm, injection and credential rules still apply."""
         session_id = session_id or uuid4()
         conversation_id = conversation_id or uuid4()
         scripts = EF_SCRIPTS_AR if language == "ar" else EF_SCRIPTS_EN
@@ -564,7 +570,7 @@ class PolicyEnforcementEngine:
             )
 
         # 9. HB-2, DP-5 & EF-2: Detect unsolicited clinical details volunteered
-        if _UNSOLICITED_PHI_RE.search(text):
+        if _UNSOLICITED_PHI_RE.search(text) and not allow_clinical_context:
             step_text = current_step if current_step else "your trip preferences"
             reply = scripts["EF-2"].format(step=step_text)
             self.audit_store.log_redaction(
@@ -684,7 +690,9 @@ class PolicyEnforcementEngine:
 
         return cleaned, categories
 
-    def validate_outbound(self, text: str, language: str = "en") -> str:
+    def validate_outbound(
+        self, text: str, language: str = "en", allow_diagnosis_question: bool = False
+    ) -> str:
         """Validate outgoing assistant response against hard restrictions."""
         cleaned = text.strip()
 
@@ -726,7 +734,15 @@ class PolicyEnforcementEngine:
             ).strip()
 
         # Ensure model never generated clinical diagnoses or prescriptions
-        if _DIAGNOSIS_RE.search(cleaned):
+        # Only while asking the owner-approved "existing diagnosis" question: the reply
+        # may use the word itself, but never prescribing, dosing or interpretation.
+        is_diagnosis_question = bool(
+            allow_diagnosis_question
+            and re.search(r"\b(?:existing|any) diagnosis\b|diagnosis or (?:health )?condition", cleaned, re.I)
+            and not re.search(r"prescri|dosage|\bdose\b|interpret|should i take|what disease", cleaned, re.I)
+        )
+        diagnosis_check = "" if is_diagnosis_question else cleaned
+        if _DIAGNOSIS_RE.search(diagnosis_check):
             scripts = EF_SCRIPTS_AR if language == "ar" else EF_SCRIPTS_EN
             return scripts["EF-1"]
 

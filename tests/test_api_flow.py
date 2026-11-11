@@ -94,11 +94,12 @@ def test_conversation_creation_returns_greeting_and_initial_actions_once():
     assert [action["action_id"] for action in body["suggested_actions"]] == [
         "medical_treatment", "wellness_programme"
     ]
-    assert body["greeting"]["content"] == (
-        "Welcome! I'm Hayat, your Trawellcare assistant. I can help you arrange a "
-        "medical treatment consultation or explore our wellness programmes. Which are "
-        "you interested in?"
-    )
+    greeting_text = body["greeting"]["content"]
+    # Warm, time-aware opening that keeps the CP-1 self-identification.
+    assert "I'm Hayat" in greeting_text
+    assert "not a medical professional" in greeting_text
+    assert greeting_text.rstrip().endswith("May I know your name?")
+    assert " - " not in greeting_text and "—" not in greeting_text
 
 
 def test_medical_category_action_stores_category_and_uses_medical_funnel():
@@ -289,7 +290,8 @@ def test_english_reply_starts_with_greeting_and_suggests_questions():
         json={"conversation_id": conversation["id"], "message": "What wellness services do you offer?"},
     )
     reply = response.json()["reply"]
-    assert reply.startswith("Hello!")
+    # The warm opening was already given when the conversation started.
+    assert not reply.startswith("Hello")
     assert response.json()["suggestions"]
 
 
@@ -307,7 +309,7 @@ def test_arabic_reply_is_arabic_and_suggests_questions():
         json={"conversation_id": conversation["id"], "message": "ما خدمات العافية المتاحة؟"},
     )
     reply = response.json()["reply"]
-    assert reply.startswith("مرحباً!")
+    assert not reply.startswith("مرحباً")
     assert not reply.startswith("Hello!")
 
 
@@ -327,7 +329,7 @@ def test_out_of_scope_question_gets_topic_boundary_and_suggestions():
     body = response.json()
     assert body["escalation_required"] is False
     assert "only about Hayat services" in body["reply"]
-    assert body["reply"].startswith("Hello!")
+    assert not body["reply"].startswith("Hello")
     assert body["suggestions"] == []
 
 

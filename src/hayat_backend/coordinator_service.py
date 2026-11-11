@@ -84,6 +84,59 @@ class CoordinatorHandoffService:
                 summary["travel_dates_flexibility"] = str(timing)
         return summary
 
+    def build_lead_card(self, conversation: Any, lead: Any, contact_authorized: bool) -> dict[str, Any]:
+        """Organised enquiry card so a coordinator can understand and call the visitor.
+
+        Contact details are released only when contact is authorised (Addendum 1.1
+        approved and the phone verified); until then the card says so."""
+        facts = getattr(conversation, "case_facts", {})
+
+        def pick(*names: str) -> Any:
+            for name in names:
+                value = facts.get(name)
+                if value in (None, ""):
+                    for section in facts.values():
+                        if isinstance(section, dict) and section.get(name) not in (None, ""):
+                            value = section[name]
+                            break
+                if value not in (None, ""):
+                    return value
+            return None
+
+        category = pick("customer_category", "care_category", "trip_type")
+        category_text = str(category or "").lower()
+        lead_category = (
+            "wellness" if "wellness" in category_text
+            else "medical" if category_text else "general"
+        )
+        card: dict[str, Any] = {
+            "lead_category": lead_category,
+            "service_or_goal": pick("procedure_or_service", "wellness_programme_or_goal"),
+            "preferred_destination": pick("destination_preference", "preferred_destination"),
+            "preferred_timing": pick("preferred_timing", "preferred_dates_times"),
+            "budget": pick("budget_range", "total_budget_range"),
+            "travellers": pick("travellers_count"),
+            "accommodation_preference": pick("accommodation_preference"),
+            "current_country": pick("current_country"),
+            "medical_reports_available": pick("medical_reports_available"),
+            "preferred_callback_time": pick("callback_time"),
+            "additional_requests": pick("additional_requests"),
+            "phone_verified": bool(lead and lead.phone_verified),
+        }
+        if self.settings.collect_diagnosis:
+            card["existing_diagnosis_stated_by_visitor"] = pick("condition_context_for_advisor")
+        if contact_authorized:
+            card["visitor_name"] = pick("name")
+            card["phone_number"] = pick("phone_number")
+            card["email"] = pick("email")
+        else:
+            card["contact_details"] = "Withheld until contact capture is approved (Addendum 1.1)."
+        messages = getattr(conversation, "messages", [])
+        card["conversation_history"] = [
+            {"role": m.role, "content": m.content} for m in messages
+        ]
+        return {k: v for k, v in card.items() if v not in (None, "")}
+
     def initiate_handoff(
         self,
         *,
@@ -120,6 +173,9 @@ class CoordinatorHandoffService:
             initial_status = HandoffStatus.AWAITING_COORDINATOR
         else:
             initial_status = existing.status
+
+        if self.settings.extended_intake:
+            case_summary["lead_card"] = self.build_lead_card(conversation, lead, contact_authorized)
 
         handoff = CoordinatorHandoff(
             id=existing.id if existing else uuid4(),

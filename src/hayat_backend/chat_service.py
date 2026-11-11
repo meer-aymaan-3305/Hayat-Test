@@ -12,9 +12,17 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from .guardrails import POLICY_VERSION, inspect_input, redact_message, validate_output
+from .guardrails import (
+    POLICY_VERSION,
+    GuardrailDecision,
+    inspect_input,
+    redact_message,
+    validate_output,
+)
 from .language import detect_language
-from .llm import ChatModel, LLMError
+from .config import get_settings
+from .turn_analyzer import TurnAnalysis, TurnAnalyzer
+from .llm import ChatModel, LLMError, OfflineChatModel
 from .memory_store import Conversation, MemoryStore
 from .rag import InMemoryRetriever, KnowledgeChunk
 from .schemas.intake import FactStatus, FactValue
@@ -25,6 +33,7 @@ from .question_planner import (
     CLARIFY_OPEN_Q,
     QuestionPlanner,
     append_planned_question,
+    enforce_single_question,
     clarify_attempts,
     wants_open_category,
 )
@@ -45,6 +54,7 @@ from .programme_service import ARABIC_LABELS, SIGN_IN_REPLY_AR, SIGN_IN_REPLY_EN
 
 
 shadow_logger = logging.getLogger("hayat.shadow")
+logger = logging.getLogger("hayat.chat")
 
 # Shadow mode asks the AI a question for every website turn, so it is capped to
 # leave room for real use under the provider's rate limits.
@@ -58,6 +68,13 @@ _AR_DIGITS = "01234567890123456789"
 def _normalize_digits(text: str) -> str:
     """Map Arabic-Indic and Extended Arabic-Indic digits to ASCII."""
     return text.translate(str.maketrans(_AR_INDIC, _AR_DIGITS))
+
+
+_GREETING_START_RE = re.compile(
+    r"\s*(?:hello|hi|hey|good (?:morning|afternoon|evening)|welcome|assalam|salam|"
+    r"مرحب|أهلا|اهلا|السلام|صباح|مساء)",
+    re.IGNORECASE,
+)
 
 
 def _opening(language: str) -> str:
@@ -426,20 +443,36 @@ def _out_of_scope(language: str) -> str:
     )
 
 
-def greeting(language: str) -> str:
+def _time_greeting(language: str, hour: int | None) -> str:
+    """Time-of-day greeting from the visitor's own clock; neutral when unknown."""
+    if hour is None or not 0 <= hour <= 23:
+        return "مرحباً" if language == "ar" else "Hi there"
+    if 5 <= hour < 12:
+        return "صباح الخير" if language == "ar" else "Good morning"
+    if 12 <= hour < 17:
+        return "مساء الخير" if language == "ar" else "Good afternoon"
+    return "مساء الخير" if language == "ar" else "Good evening"
+
+
+def greeting(language: str, hour: int | None = None) -> str:
+    """Warm opening. Keeps the CP-1 substance: AI assistant, not a medical professional."""
+    hello = _time_greeting(language, hour)
     if language == "ar":
         return (
-            "مرحباً! أنا حياة، ويمكنني مساعدتك في الخدمات الطبية والعافية والسفر الطبي. "
-            "كيف يمكنني مساعدتك اليوم؟\n\n"
-            "يمكنك أن تسألني مثلاً:\n"
-            "• ما الخدمات الطبية أو خدمات العافية المتاحة؟\n"
-            "• كيف أرتب استشارة أو رحلة علاج؟\n"
-            "• ما المعلومات التي أحتاج إلى تجهيزها؟"
+            f"{hello}! 😊 كيف حالك اليوم؟ أنا حياة، مساعدتك الذكية للصحة والعافية في ترافيل كير. "
+            "أساعدك على استكشاف خيارات الرعاية وتجارب العافية، لكنني لست مختصة طبية ولا أقدم "
+            "تشخيصاً أو نصيحة طبية. هل لي أن أعرف اسمك؟"
         )
+    feeling = {
+        "Good morning": "How is your morning going?",
+        "Good afternoon": "How has your day been?",
+        "Good evening": "How is your evening going?",
+    }.get(hello, "How are you doing today?")
     return (
-        "Welcome! I'm Hayat, your Trawellcare assistant. I can help you arrange a "
-        "medical treatment consultation or explore our wellness programmes. Which are "
-        "you interested in?"
+        f"{hello}! 😊 {feeling} I'm Hayat, Trawellcare's AI health and wellness concierge. "
+        "I'm here to help you explore care options and wellness journeys, though I'm not a "
+        "medical professional and can't give diagnoses or medical advice. "
+        "May I know your name?"
     )
 
 
@@ -605,13 +638,268 @@ def evidence_block(knowledge: str) -> str:
     )
 
 
+# Fields filled from the visitor's reply to the question that was just asked.
+_SLOT_FIELDS = {
+    "budget_range", "travellers_count", "accommodation_preference",
+    "condition_context_for_advisor", "medical_reports_available",
+    "current_country", "callback_time", "email",
+    "preferred_timing", "destination_preference",
+}
+# Slots that already have dedicated extractors; the generic fallback only runs
+# for them in extended-intake mode.
+_CORE_SLOTS = {"preferred_timing", "destination_preference"}
+_SKIP_VALUES = {
+    "budget_range": "Flexible / not decided",
+    "travellers_count": "Not specified",
+    "accommodation_preference": "No preference",
+    "medical_reports_available": "Not specified",
+    "current_country": "Not provided",
+    "callback_time": "Flexible",
+    "email": "Not provided",
+    "condition_context_for_advisor": "Prefers to discuss with the Medical Advisor",
+    "preferred_timing": "Flexible",
+    "destination_preference": "Flexible (open to suggestions)",
+}
+_GOAL_KEYWORDS = {
+    "budget_range": r"budget|spend|afford|price range|cost",
+    "travellers_count": r"alone|on your own|joining|travell?ing with|how many|companion|who.{0,12}(?:travel|come)",
+    "accommodation_preference": r"stay|hotel|accommodation|room|where.{0,20}sleep",
+    "condition_context_for_advisor": r"diagnos|condition|health background|medical history",
+    "medical_reports_available": r"report|record|scan|mri|document",
+    "current_country": r"based|country.{0,20}(?:live|reside|now|moment|currently)|where.{0,15}(?:live|based)",
+    "callback_time": r"call|reach you|good time|available|callback",
+    "email": r"e-?mail",
+    "preferred_timing": r"when|timeframe|time ?frame|month|dates?|how soon|timeline",
+    "destination_preference": r"destination|country|where would you|which place|location",
+    "phone_number": r"phone|number|whatsapp|mobile",
+    "name": r"your name|call you",
+}
+
+
+def _align_question(reply: str, plan: Any, language: str = "en") -> str:
+    """Keep the model's warm acknowledgement but make sure the one question asked is
+    the planned one: if the model asked about something else, drop its question so the
+    planned question is appended instead."""
+    field = getattr(plan, "target_field", None)
+    pattern = _GOAL_KEYWORDS.get(field or "")
+    if not pattern or not getattr(plan, "question_text", None):
+        return reply
+    sentences = re.split(r"(?<=[.!?؟])\s+", reply.strip())
+    asked = [x for x in sentences if "?" in x or "؟" in x]
+    # The keyword check is English only; for Arabic the planned question always wins.
+    if not asked or (language != "ar" and any(re.search(pattern, x, re.I) for x in asked)):
+        return reply
+    kept = [x for x in sentences if x not in asked]
+    return " ".join(kept).strip() or reply
+
+_SLOT_SKIP_RE = re.compile(
+    r"^\s*(?:skip|no|none|nope|nothing|not sure|not yet|later|prefer not to say|"
+    r"i(?:'d| would) rather not|rather not|no preference|flexible|any|"
+    r"لا|تخطى|لاحقا|لاحقاً|مرن)\b",
+    re.IGNORECASE,
+)
+_SLOT_SKIP_VALUE = {
+    "budget_range": "Flexible / not decided",
+    "travellers_count": "Not specified",
+    "accommodation_preference": "No preference",
+    "condition_context_for_advisor": "Prefers to discuss with the Medical Advisor",
+    "medical_reports_available": "No",
+    "current_country": "Not provided",
+    "callback_time": "Flexible",
+    "email": "Not provided",
+    "preferred_timing": "Flexible",
+    "destination_preference": "Flexible (open to suggestions)",
+}
+
+
+def _declarative_part(text: str) -> str:
+    """The statements in a message, without its questions.
+
+    "I have a torn ACL, can your doctors fix it?" -> "I have a torn ACL". A reply that
+    answers and also asks something still carries its answer."""
+    kept: list[str] = []
+    for sentence in re.split(r"(?<=[.!?؟])\s+", text):
+        if "?" not in sentence and "؟" not in sentence:
+            kept.append(sentence)
+            continue
+        for clause in re.split(r"[,;،]", sentence):
+            if "?" in clause or "؟" in clause:
+                break
+            kept.append(clause)
+    return " ".join(part.strip() for part in kept if part.strip()).strip(" ,;")
+
+
+def _slot_value(field: str, text: str) -> str | None:
+    """Clean value for a one-question-at-a-time answer, or None if it is not one."""
+    clean = _declarative_part(_normalize_digits(text).strip())
+    if not clean or len(clean.split()) > 40:
+        return None
+    if field in _CORE_SLOTS and len(clean.split()) > 8:
+        return None
+    if _SLOT_SKIP_RE.match(clean) and field != "medical_reports_available":
+        return _SLOT_SKIP_VALUE[field]
+    if field == "email":
+        return None  # a real address is picked up by the email extractor
+    if field == "travellers_count":
+        if re.search(r"\b(alone|solo|myself|just me|only me|by myself)\b", clean, re.I):
+            return "1 (travelling alone)"
+        match = re.search(r"\b(\d{1,2})\b", clean)
+        if match:
+            return clean[:80]
+    if field == "medical_reports_available":
+        if re.match(r"^\s*(?:no|none|nope|not yet|لا)\b", clean, re.I):
+            return "No"
+        if re.match(r"^\s*(?:yes|yeah|yep|sure|i do|i have|نعم)\b", clean, re.I):
+            return clean[:120]
+    return clean[:200]
+
+
+_EM_DASH_RE = re.compile(r"\s*[\u2014\u2013\u2015]\s*")
+_SPACED_HYPHEN_RE = re.compile(r"\s+-\s+")
+_BULLET_LINE_RE = re.compile(r"(?m)^\s*(?:[\u2022\u25cf\u25aa*]|-|\d+[.)])\s+")
+
+
+def humanize_reply(reply: str) -> str:
+    """Make every outbound reply read like chat: no dashes, bullets or paragraph breaks.
+
+    Intra-word hyphens (HAYAT-100, ENQ-A1B2C3D4, phone numbers) are preserved."""
+    if not reply:
+        return reply
+    text = reply.replace("\u2011", "-").replace("\u2010", "-")
+    text = re.sub(r"(?<=\d)\s*[\u2013\u2014]\s*(?=\d)", " to ", text)
+    text = _BULLET_LINE_RE.sub("", text)
+    text = _EM_DASH_RE.sub(", ", text)
+    text = _SPACED_HYPHEN_RE.sub(", ", text)
+    text = re.sub(r"\s*\n+\s*", " ", text)
+    text = re.sub(r",\s*,", ",", text)
+    text = re.sub(r"([.!?\u061f:]),", r"\1", text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
+
+
+_ANALYZER_CONTEXT_FIELDS = {
+    "customer_category", "procedure_or_service", "wellness_programme_or_goal",
+    "destination_preference", "preferred_timing", "budget_range", "travellers_count",
+    "accommodation_preference", "current_country", "name",
+}
+_CONTACT_FIELDS = {"email", "phone_number", "name", "timezone"}
+_ANALYSIS_ALIASES = {
+    "procedure_or_service": ("service_procedure_category",),
+    "destination_preference": ("preferred_destination",),
+    "preferred_timing": ("preferred_dates_times", "travel_dates_flexibility"),
+    "budget_range": ("total_budget_range",),
+}
+
+
+def _merge_analysis(
+    facts: list[FactValue], analysis: TurnAnalysis, message_id: Any, conversation: Conversation,
+    pending_field: str | None = None,
+) -> list[FactValue]:
+    """Combine rule-based facts with the model's reading of the turn.
+
+    A pure question never records preferences (naming Germany in a question is not a
+    destination choice). The model's cleaner values replace slot-filled raw text."""
+    if analysis.intent == "question":
+        facts = [
+            f for f in facts
+            if f.field_name in _CONTACT_FIELDS or f.field_name == "condition_context_for_advisor"
+        ]
+    # A raw reply stored under the planned field is only right if the model agrees the
+    # visitor answered that question (the assistant may have asked something else).
+    # The diagnosis answer is not an analyzer key, so it is kept unless they declined.
+    if (
+        pending_field in _SLOT_FIELDS
+        and analysis.facts
+        and pending_field not in analysis.facts
+        and pending_field != "condition_context_for_advisor"
+        and analysis.intent != "declines"
+    ):
+        facts = [
+            f for f in facts
+            if not (f.field_name == pending_field and f.confidence == 0.9)
+        ]
+    merged = {f.field_name: f for f in facts}
+
+    def put(field_name: str, value: str, confidence: float = 0.85) -> None:
+        merged[field_name] = FactValue(
+            field_name=field_name, value=value, status=FactStatus.CONFIRMED,
+            source_message_id=message_id, confidence=confidence,
+        )
+
+    if analysis.intent == "new_request" and analysis.note:
+        existing = conversation.case_facts.get("additional_requests")
+        note = analysis.note if not existing else f"{existing}; {analysis.note}"
+        put("additional_requests", note[:500])
+
+    if analysis.category and "customer_category" not in merged:
+        put("customer_category", analysis.category)
+        put("trip_type", "wellness" if analysis.category == "wellness" else "medical")
+    for field_name, value in analysis.facts.items():
+        if field_name == "name" and "name" in merged:
+            continue
+        put(field_name, value)
+        for alias in _ANALYSIS_ALIASES.get(field_name, ()):
+            put(alias, value)
+    return list(merged.values())
+
+
+def _turn_instruction(plan: Any, analysis: TurnAnalysis | None) -> str:
+    """What this particular turn should do, written for the reply model."""
+    intent = analysis.intent if analysis else None
+    question = plan.question_text
+    if plan.decision_type == "post_submission":
+        return (
+            "\nConversation policy: the visitor's enquiry is ALREADY submitted to the "
+            "Trawellcare team, so never ask them to submit again and never restart the "
+            "questions. Help with whatever they say now. If they change a detail (a date, "
+            "destination, budget, callback time), confirm it is updated and passed to their "
+            "coordinator. If they want an additional service or something for another "
+            "person, say it has been added to their enquiry and the coordinator will cover "
+            "it. If they ask what happens next, explain that a coordinator reviews the "
+            "enquiry and reaches out. If they are saying goodbye or thanks, close warmly. "
+            "Keep it short and ask at most one question, only if it genuinely helps."
+        )
+    if intent == "off_topic":
+        return (
+            "\nConversation policy: the visitor asked about something unrelated to "
+            "Trawellcare. Do NOT answer it, not even partly and not even if it is easy. "
+            "In one warm sentence say you can only help with Trawellcare, then, if natural, "
+            "gently return to the next step (reword it, keep its meaning, never invent a "
+            f"different question): {question or 'none, just offer your help'}. Never ask "
+            "two questions."
+        )
+    if getattr(plan, "answer_first", False):
+        return (
+            "\nConversation policy: the visitor just asked or shared something beyond a "
+            "plain answer"
+            + (" (they asked to speak with a person)" if intent == "wants_human" else "")
+            + (" (they want an additional service: acknowledge it and say it is added to "
+               "their enquiry for the coordinator)" if intent == "new_request" else "")
+            + ". Respond to THAT first, directly and helpfully, using the approved "
+            "evidence. Being genuinely useful matters more than being brief here: "
+            "up to 3 short sentences, in plain conversational words. If the evidence "
+            "does not cover it, say so kindly and offer to have the team confirm. "
+            "Then, only if it feels natural, gently bring the conversation back to "
+            "the next step (reword it warmly, keep its meaning, never invent a "
+            f"different question): {question or 'none'}. If they seem to "
+            "be still exploring or are asking several things, skip the step and "
+            "invite their next question instead. Never ask two questions."
+        )
+    return (
+        "\nConversation policy: answer the user's immediate question first. If they "
+        "changed a detail they gave earlier, confirm the new one plainly and move on. "
+        "Then ask exactly one follow-up question, and it MUST be this one (reword it "
+        "warmly in your own style, keep its meaning, never invent a different question): "
+        f"{question or 'none, do not ask a follow-up'}"
+    )
+
+
 class ChatService:
     def __init__(
         self,
         store: MemoryStore,
         model: ChatModel,
         retriever: InMemoryRetriever | None = None,
-        history_limit: int = 10,
+        history_limit: int = 6,
         crm_client: CRMWebhookClient | None = None,
         coordinator_service: CoordinatorHandoffService | None = None,
     ) -> None:
@@ -619,7 +907,18 @@ class ChatService:
         self.model = model
         self.retriever = retriever if retriever is not None else InMemoryRetriever()
         self.history_limit = history_limit
-        self.question_planner = QuestionPlanner()
+        _cfg = get_settings()
+        self.collect_diagnosis = bool(_cfg.collect_diagnosis)
+        self.analyzer = None
+        if _cfg.extended_intake and _cfg.groq_api_key and not isinstance(model, OfflineChatModel):
+            try:
+                self.analyzer = TurnAnalyzer(_cfg)
+            except Exception:
+                self.analyzer = None
+        self.question_planner = QuestionPlanner(
+            extended=bool(_cfg.extended_intake),
+            collect_diagnosis=self.collect_diagnosis,
+        )
         self.crm_client = crm_client if crm_client is not None else CRMWebhookClient()
         self.coordinator_service = (
             coordinator_service
@@ -629,6 +928,35 @@ class ChatService:
         self.programme_service = ProgrammeConversationService(self.store)
         self._shadow_calls: deque[float] = deque()
         self._shadow_tasks: set[asyncio.Task[None]] = set()
+
+    def _skip_if_stuck(
+        self, conversation: Conversation, pending_field: str | None,
+        facts: list[FactValue], message_id: Any,
+    ) -> list[FactValue]:
+        """Never loop on one question. If the same question has been asked three times
+        and still has no answer, record it as skipped so the conversation moves on."""
+        if not self.question_planner.extended or pending_field not in _SKIP_VALUES:
+            return facts
+        if any(f.field_name == pending_field for f in facts):
+            return facts
+        pattern = _GOAL_KEYWORDS.get(pending_field)
+        if not pattern:
+            return facts
+        recent = [m.content for m in conversation.messages if m.role == "assistant"][-6:]
+        asked = sum(
+            1 for content in recent
+            if any(re.search(pattern, part, re.I) for part in re.split(r"(?<=[.!?])\s+", content) if "?" in part)
+        )
+        if asked < 3:
+            return facts
+        return facts + [FactValue(
+            field_name=pending_field, value=_SKIP_VALUES[pending_field],
+            status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=0.5,
+        )]
+
+    def _model_is_live(self) -> bool:
+        """True when a real provider model (not the offline stub) will answer."""
+        return not isinstance(self.model, OfflineChatModel)
 
     def initial_actions(self, language: str) -> list[ChatAction]:
         return [
@@ -795,8 +1123,33 @@ class ChatService:
         # Determine pending field before user message is processed
         pending_field = self.question_planner.current_pending_field(conversation)
 
+        # Read the turn with the model while the message is being saved.
+        analysis_task = None
+        if self.analyzer is not None:
+            last_assistant = next(
+                (m.content for m in reversed(conversation.messages) if m.role == "assistant"), ""
+            )
+            analysis_task = asyncio.create_task(self.analyzer.analyze(
+                text=redact_message(text),
+                last_assistant=last_assistant,
+                pending_field=pending_field,
+                known={
+                    k: v for k, v in conversation.case_facts.items()
+                    if not isinstance(v, dict) and v not in (None, "") and k in _ANALYZER_CONTEXT_FIELDS
+                },
+            ))
+
         # Append user message and log transcript
         user_message = self.store.append_message(conversation, "user", redact_message(text), language)
+        analysis: TurnAnalysis | None = None
+        if analysis_task is not None:
+            analysis = await analysis_task
+            if analysis is not None:
+                logger.info(
+                    "turn_analysis conversation=%s intent=%s category=%s fact_keys=%s pending=%s",
+                    conversation.id, analysis.intent, analysis.category,
+                    sorted(analysis.facts), pending_field,
+                )
         global_audit_store.log_transcript(
             session_id=conversation.session_id,
             conversation_id=conversation.id,
@@ -807,7 +1160,7 @@ class ChatService:
         )
 
         # Check if message pertains to Signature Wellness Programmes (Separate Service Category)
-        if self.programme_service.is_programme_intent(text, conversation):
+        if not self.question_planner.extended and self.programme_service.is_programme_intent(text, conversation):
             decision = inspect_input(
                 text,
                 conversation=conversation,
@@ -885,6 +1238,7 @@ class ChatService:
             if prior_user_message_count == 0 and not reply.startswith("Hello") and not reply.startswith("مرحباً"):
                 reply = _opening(language) + reply
 
+            reply = humanize_reply(reply)
             assistant_message = self.store.append_message(conversation, "assistant", reply, language)
             global_audit_store.log_transcript(
                 session_id=conversation.session_id,
@@ -985,6 +1339,9 @@ class ChatService:
 
         # Extract facts with conversational context
         all_facts = self._extract_facts(text, user_message.id, conversation, pending_field)
+        all_facts = self._skip_if_stuck(conversation, pending_field, all_facts, user_message.id)
+        if analysis is not None:
+            all_facts = _merge_analysis(all_facts, analysis, user_message.id, conversation, pending_field)
 
         # Handle category switching (medical <-> wellness)
         new_category = next((f.value for f in all_facts if f.field_name == "customer_category"), None)
@@ -1010,6 +1367,16 @@ class ChatService:
         ]
         profile = self.store.save_fact_updates(conversation, fact_updates)
 
+        # After submission the coordinator works from the handoff, so any change the
+        # visitor makes (a new date, a new destination, an extra request) refreshes it.
+        if conversation.consultation_id and fact_updates:
+            try:
+                self.coordinator_service.initiate_handoff(
+                    conversation=conversation, session_id=conversation.session_id
+                )
+            except Exception:  # never fail the chat turn because the refresh failed
+                logger.exception("could not refresh the coordinator handoff")
+
         # CP-5 exact-summary rule: confirmation covers the summary the user saw.
         # If any permitted Appendix A detail changed after confirmation, the
         # earlier confirmation no longer applies and must be renewed.
@@ -1026,7 +1393,16 @@ class ChatService:
             pending_field=pending_field,
             extracted_facts=all_facts,
             language=language,
+            allow_clinical_context=(
+                self.collect_diagnosis and pending_field == "condition_context_for_advisor"
+            ),
         )
+
+        if decision.reason == "out_of_scope" and analysis is not None:
+            # In guided mode the model's reading decides what is on topic. The keyword
+            # rule behind this canned refusal cannot tell "do you cover dental?" from
+            # "who is the president?", so the reply model words the answer or the decline.
+            decision = GuardrailDecision()
 
         if decision.blocked:
             if decision.reason in ("possible_emergency", "EF-9"):
@@ -1063,6 +1439,7 @@ class ChatService:
             clarification_reply is None
             and not decision.blocked
             and _SERVICE_EXPLAIN_RE.search(text)
+            and not (use_ai and self._model_is_live())
             and not self._in_programme_context(conversation, text)
             and not (
                 document_context
@@ -1078,6 +1455,7 @@ class ChatService:
             clarification_reply is None
             and not decision.blocked
             and _PROGRAMMES_OVERVIEW_RE.search(text)
+            and not (use_ai and self._model_is_live())
             and not self._in_programme_context(conversation, text)
         ):
             clarification_reply = (
@@ -1091,6 +1469,7 @@ class ChatService:
             clarification_reply is None
             and not decision.blocked
             and _COST_FAQ_RE.search(text)
+            and not (use_ai and self._model_is_live())
             and not self._in_programme_context(conversation, text)
         ):
             clarification_reply = _COST_FAQ_AR if language == "ar" else _COST_FAQ_EN
@@ -1171,7 +1550,9 @@ class ChatService:
         )
         progress = self.store.consultation_progress(conversation)
         plan = self.question_planner.plan(
-            text=text, conversation=conversation, decision=decision, progress=progress, visitor=visitor
+            text=text, conversation=conversation, decision=decision, progress=progress,
+            visitor=visitor, intent=analysis.intent if analysis else None,
+            submitted=bool(conversation.consultation_id),
         )
         if submission is not None:
             plan = type(plan)(
@@ -1202,9 +1583,13 @@ class ChatService:
         elif decision.reply:
             reply = decision.reply
         else:
-            scored_chunks = await self.retriever.retrieve_scored(text)
+            scored_chunks = await self.retriever.retrieve_scored(text, limit=2)
             chunks = [chunk for _, chunk in scored_chunks]
             knowledge = "\n\n".join(chunk.text for chunk in chunks)
+            if analysis is not None and analysis.intent in {"answering", "declines", "off_topic"}:
+                # A plain answer to the flow's question needs no company evidence;
+                # leaving it out saves tokens and stops the model embellishing.
+                knowledge = ""
             prior_history = [
                 {"role": message.role, "content": message.content}
                 for message in conversation.messages[:-1][-self.history_limit :]
@@ -1219,17 +1604,62 @@ class ChatService:
                 if not isinstance(v, dict) and v not in (None, "")
             }
             known_str = ", ".join(f"{k}: {v}" for k, v in known_facts.items())
+            recent_replies = [
+                m.content for m in conversation.messages[:-1] if m.role == "assistant"
+            ][-3:]
             system = (
-                "You are Hayat, a concise bilingual coordination assistant for medical travel and wellness.\n"
-                "STYLE: warm, empathetic, concise — 1-3 sentences per reply, never a wall of text. "
-                "Acknowledge the visitor's latest message in a few words before moving on.\n"
-                "CRITICAL POLICIES:\n"
+                "You are Hayat, Trawellcare's warm, caring travel-and-wellness companion. "
+                "SCOPE: you only talk about Trawellcare: what it is, how it works, its medical "
+                "travel and wellness services, the signature programmes, and the visitor's own "
+                "enquiry. You do not answer anything else, not even simple things: no general "
+                "knowledge, maths, poems, jokes, news, politics, weather, tourism or restaurant "
+                "tips, or other companies. For those, kindly say in one short sentence that you "
+                "can only help with Trawellcare, and offer what you can help with. "
+                "You talk like a kind, attentive friend who happens to know this field well — "
+                "never like a form, a script or a help-desk robot.\n"
+                "VOICE:\n"
+                "- Be genuinely empathetic: notice how the visitor feels (worried, excited, "
+                "overwhelmed) and respond to that first, in your own words.\n"
+                "- Keep it short: usually 1-2 brief sentences (up to 3 when answering a question). NEVER write "
+                "paragraphs, lists, bullet points, headings or bold text. Plain chat only.\n"
+                "- Use natural contractions and everyday words (\"I'd love to help\", \"that "
+                "sounds lovely\"). Use the visitor's first name naturally once you know it, "
+                "but not in every message. Add one friendly emoji now and then when it fits.\n"
+                "- NEVER use hyphens or dashes to join phrases (no ' - ' and no em dashes). "
+                "Write flowing sentences. Never introduce yourself or greet again after "
+                "the first message.\n"
+                "- When someone shares something personal or worrying, respond to the feeling "
+                "first. If their message contains [REDACTED...] text, simply thank them kindly "
+                "for trusting you and never mention redaction. [REDACTED_CONTACT_DETAIL] means "
+                "they just shared their contact number: thank them and say it is noted.\n"
+                "- If they ask how Trawellcare works, explain it warmly in a few simple "
+                "sentences, tailored to medical travel or wellness, then gently ask what "
+                "they are looking for. Never recite every stage unless asked. Never promise a "
+                "hospital, treatment, flight, visa or booking is confirmed until a coordinator "
+                "has verified it.\n"
+                "- Never praise, rank or endorse a destination, hospital or doctor (no \"great "
+                "choice\"); acknowledge it neutrally.\n"
+                "- End important steps with a clear next step so they know what happens next.\n"
+                "- Vary how you open every reply. Never start two replies the same way, and "
+                "avoid stock phrases like \"Thank you for sharing\" or \"Certainly\".\n"
+                "- Answer what they actually asked first, using the approved evidence. Then, "
+                "only if it fits, ask one gentle question.\n"
+                "- If you don't know something, say so kindly and offer to have the team "
+                "confirm. Never guess prices, dates, places, partners or inclusions.\n"
+                + (
+                    "Your last replies (do NOT reuse their wording or openings): "
+                    + " || ".join(r[:160] for r in recent_replies)
+                    + "\n"
+                    if recent_replies else ""
+                )
+                + "CRITICAL POLICIES:\n"
                 "1. Ask at most ONE question in your response. Never ask multiple questions.\n"
                 "1a. NEVER repeat information, checklists, requirements or questions you already gave earlier in this conversation. If the visitor already answered — or said they don't know, are flexible or unsure — accept it, acknowledge briefly, and move to the next step. Do not re-ask the same question.\n"
                 "1b. Do NOT list preparation requirements (medical records, reports, imaging, medications, passport) unless the visitor explicitly asks what to prepare. Mention them once, briefly, only when relevant to the next step.\n"
                 "1c. If the visitor says they still don't understand or asks you to explain again, do NOT repeat the same wording — explain it differently, more simply, with a concrete everyday example.\n"
                 "1d. If the visitor asks what they already told you or wants to recall their details, answer directly from the ALREADY KNOWN DETAILS — never ask again for something already provided.\n"
                 "0. NEVER name, recommend, rank or compare hospitals, clinics, doctors, countries or treatments, even if asked. Say a case manager will prepare options.\n"
+                "0b. Never praise, rank or endorse a destination, hospital or doctor (never say \"great choice\" or \"excellent choice\"); acknowledge it neutrally, for example \"Noted, thank you.\" (never invent or repeat details the visitor has not given)\n"
                 "2. Do NOT promise or offer to find or recommend specific individual doctors or cardiologists. Hayat coordinates with accredited partner hospital departments; human coordinators review requests.\n"
                 "3. Do NOT claim to check live provider or doctor availability, send document upload links, or confirm live bookings.\n"
                 "4. Do NOT state that specific medical records or imaging files are mandatory; they are helpful if available.\n"
@@ -1245,10 +1675,14 @@ class ChatService:
                     f"\nALREADY KNOWN DETAILS (do NOT ask for any of these again): {known_str}."
                     if known_str else ""
                 )
+                + _turn_instruction(plan, analysis)
                 + (
-                    "\nConversation policy: answer the user's immediate question first. "
-                    "Then ask exactly one relevant follow-up question if the planner "
-                    f"requests it: {plan.question_text or 'do not ask a follow-up'}"
+                    "\n7. Never promise a phone call, a callback time or that someone will "
+                    "contact the visitor unless they have already shared and verified their "
+                    "number and agreed to share their details. Say instead that a coordinator "
+                    "personally reviews every enquiry and reaches out after the details are "
+                    "shared."
+                    if self.question_planner.extended else ""
                 )
             )
             if knowledge:
@@ -1282,17 +1716,46 @@ class ChatService:
                 self._start_shadow(conversation.id, model_messages, language)
             try:
                 generated = None if not use_ai else await self.model.complete(model_messages)
-                reply = validate_output(generated, language) if generated else None
+                reply = (
+                    validate_output(
+                        generated, language,
+                        allow_diagnosis_question=(
+                            self.collect_diagnosis
+                            and plan.target_field == "condition_context_for_advisor"
+                        ),
+                    )
+                    if generated else None
+                )
+                if reply:
+                    # Keep it a chat message: no markdown, bullets or paragraph breaks.
+                    reply = re.sub(r"[*_`#]+", "", reply)
+                    reply = re.sub(r"(?m)^\s*(?:[-•]|\d+[.)])\s+", "", reply)
+                    reply = re.sub(r"\s*\n+\s*", " ", reply).strip()
                 # An AI reply generated with approved evidence counts as grounded.
                 reply_used_knowledge = reply is not None and bool(chunks)
-            except (LLMError, TypeError, ValueError):
+            except (LLMError, TypeError, ValueError) as exc:
+                logger.warning(
+                    "reply model unavailable (%s: %s); using the offline fallback",
+                    type(exc).__name__, type(exc.__cause__).__name__ if exc.__cause__ else "-",
+                )
                 reply = None
 
         # Robust context-aware fallbacks when model completion fails or returns None
+        model_outage = (
+            reply is None and use_ai and self.question_planner.extended and self._model_is_live()
+        )
         if reply is None:
             lower_text = text.lower()
             recall = _recall_reply(conversation, language) if _RECALL_RE.search(text) else None
-            if recall:
+            if model_outage:
+                # Every model failed. Say so honestly instead of a canned reply that
+                # sounds relevant but is not; the flow's own question is still appended.
+                reply = (
+                    "عذراً، أواجه مشكلة بسيطة الآن وأحتاج لحظة."
+                    if language == "ar"
+                    else "Sorry, I'm having a little trouble right now, but I've noted your message."
+                )
+            elif recall:
                 reply = recall
             elif document_context and _doc_related_turn(conversation, document_context, text):
                 reply = _document_reply(document_context, text, language)
@@ -1376,10 +1839,17 @@ class ChatService:
                     sentences = re.split(r"(?<=[.!?؟])\s+", reply.strip())
                     declarative = [s for s in sentences if "?" not in s and "؟" not in s]
                     reply = " ".join(declarative).strip() if declarative else reply
+            if self.question_planner.extended and not plan.answer_first:
+                reply = _align_question(reply, plan, language)
             planned = plan
             if language == "ar" and plan.question_text in ARABIC_QUESTIONS:
                 planned = replace(plan, question_text=ARABIC_QUESTIONS[plan.question_text])
-            reply = append_planned_question(reply, planned)
+            if not plan.answer_first:
+                # On answer-first turns the model decides whether the moment is right
+                # to return to the flow; it is never forced.
+                reply = append_planned_question(reply, planned)
+            else:
+                reply = enforce_single_question(reply)
         if plan.decision_type in {"account_request_saved", "sign_in_required"}:
             cta = _account_reply(plan.decision_type, language)
             # Do not repeat the identical sign-in CTA on consecutive turns —
@@ -1394,9 +1864,13 @@ class ChatService:
                 reply = cta
 
         # Prepend opening greeting only on the user's first message if not an emergency or crisis
-        if prior_user_message_count == 0 and not decision.escalation_required and decision.reason not in ("possible_emergency", "crisis_self_harm", "EF-9", "EF-10"):
-            reply = _opening(language) + reply
+        if prior_user_message_count == 0 and not any(m.role == "assistant" for m in conversation.messages[:-1]) and not decision.escalation_required and decision.reason not in ("possible_emergency", "crisis_self_harm", "EF-9", "EF-10"):
+            if not _GREETING_START_RE.match(reply):
+                reply = _opening(language) + reply
 
+        if not (decision.blocked or decision.escalation_required):
+            # Approved policy scripts (emergency, refusals) stay word for word.
+            reply = humanize_reply(reply)
         assistant_message = self.store.append_message(conversation, "assistant", reply, language)
         global_audit_store.log_transcript(
             session_id=conversation.session_id,
@@ -1429,6 +1903,11 @@ class ChatService:
                 if len(sources) >= 3:
                     break
 
+        # Independent lookups: run side by side instead of one network trip each.
+        handoff, programme_enquiry = await asyncio.gather(
+            asyncio.to_thread(self.store.get_handoff_for_conversation, conversation.id),
+            asyncio.to_thread(self.store.get_programme_enquiry_for_conversation, conversation.id),
+        )
         result = {
             "user_message": user_message,
             "assistant_message": assistant_message,
@@ -1458,8 +1937,8 @@ class ChatService:
                 else progress.request_status
             ),
             "consultation": submission,
-            "coordinator_handoff": self.store.get_handoff_for_conversation(conversation.id),
-            "programme_enquiry": self.store.get_programme_enquiry_for_conversation(conversation.id),
+            "coordinator_handoff": handoff,
+            "programme_enquiry": programme_enquiry,
             "service_category": "international_medical_travel",
         }
         result["suggested_actions"] = result["suggestions"]
@@ -2026,6 +2505,33 @@ class ChatService:
                 field_name="air_ambulance_requirement", value=True,
                 status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=1.0,
             ))
+
+        # A country named while answering "where are you based" is not a destination.
+        if pending_field == "current_country":
+            updates = [
+                u for u in updates
+                if u.field_name not in {"destination_preference", "preferred_destination"}
+            ]
+
+        # Extended intake: the planner asks one question at a time, so the visitor's
+        # reply to it is the answer for that field. Questions and long messages are
+        # never treated as answers.
+        if (
+            pending_field in _SLOT_FIELDS
+            and not any(f.field_name == pending_field for f in updates)
+            and (pending_field not in _CORE_SLOTS or get_settings().extended_intake)
+        ):
+            slot_value = _slot_value(pending_field, text)
+            if slot_value:
+                updates.append(FactValue(
+                    field_name=pending_field, value=slot_value, status=FactStatus.CONFIRMED,
+                    source_message_id=message_id, confidence=0.9,
+                ))
+                if pending_field == "preferred_timing":
+                    updates.append(FactValue(
+                        field_name="preferred_dates_times", value=slot_value,
+                        status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=0.9,
+                    ))
 
         # Canonical Appendix A mappings
         canonical_additions: list[FactValue] = []

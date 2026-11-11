@@ -64,7 +64,7 @@ def test_exact_five_message_reproduction_conversation():
     history = client.get(f"/v1/conversations/{conv_id}/messages", headers=auth).json()
     assert len(history["messages"]) == 1
     bot_greeting = history["messages"][0]["content"]
-    assert "Welcome! I'm Hayat" in bot_greeting
+    assert "I'm Hayat" in bot_greeting
 
     # 2. User selects: "I am interested in medical treatment."
     turn2 = client.post(
@@ -292,7 +292,8 @@ def test_opening_greeting_is_not_repeated_on_every_turn():
         json={"conversation_id": conv_id, "message": "I am interested in medical treatment."},
     ).json()
     # First user message response starts with greeting
-    assert res1["reply"].startswith("Hello!")
+    # The greeting was given once at conversation start, never re-added to a reply.
+    assert not res1["reply"].startswith("Hello")
 
     res2 = client.post(
         "/v1/chat",

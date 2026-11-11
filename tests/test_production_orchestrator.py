@@ -357,7 +357,7 @@ def test_scenario_16_multilingual_arabic_and_international_phone():
     # Arabic input
     ar_res = client.post("/v1/chat", headers=auth, json={"conversation_id": cid, "message": "أريد علاج طبي لأمراض القلب"}).json()
     assert ar_res["language"] == "ar"
-    assert "مرحباً!" in ar_res["reply"] or "قلب" in ar_res["reply"]
+    assert "مرحباً!" not in ar_res["reply"]
 
     # International phone number (+44 UK)
     en_res = client.post("/v1/chat", headers=auth, json={"conversation_id": cid, "message": "My phone is +44 20 7946 0919 and my name is Alice."}).json()

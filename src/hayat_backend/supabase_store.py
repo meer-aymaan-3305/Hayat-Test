@@ -7,6 +7,8 @@ is the one-time guest token at session creation.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 import hashlib
 import logging
@@ -30,6 +32,16 @@ from .schemas.programme import (
 from .schemas.intake import ConsultationProgress, FactValue, PersonaReadyProfile
 
 logger = logging.getLogger("hayat.supabase")
+
+# The supabase client is synchronous. Independent reads are fanned out to this
+# small pool so a turn pays one network round trip instead of several in a row.
+_READ_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="hayat-read")
+
+
+def _parallel(*calls: Callable[[], Any]) -> list[Any]:
+    """Run independent zero-argument callables concurrently; re-raise the first error."""
+    futures = [_READ_POOL.submit(call) for call in calls]
+    return [future.result() for future in futures]
 
 
 def _uuid(value: Any) -> UUID:
@@ -123,48 +135,60 @@ class SupabaseStore:
         return Conversation(_uuid(data["id"]), session_id)
 
     def get_conversation(self, session_id: UUID, conversation_id: UUID) -> Conversation:
-        response = self.client.table("conversations").select(
-            "id,guest_session_id"
-        ).eq("id", str(conversation_id)).eq(
-            "guest_session_id", str(session_id)
-        ).maybe_single().execute()
+        cid = str(conversation_id)
+
+        def owner():
+            return self.client.table("conversations").select(
+                "id,guest_session_id"
+            ).eq("id", cid).eq(
+                "guest_session_id", str(session_id)
+            ).maybe_single().execute()
+
+        def messages():
+            return self.client.table("messages").select(
+                "id,conversation_id,role,content,language,sequence,created_at"
+            ).eq("conversation_id", cid).order("sequence").execute().data or []
+
+        def facts_latest():
+            return self.client.table("case_facts").select("id,facts").eq(
+                "conversation_id", cid
+            ).order("version", desc=True).limit(1).execute().data or []
+
+        def consultation_row():
+            return self.client.table("consultation_requests").select(
+                "id"
+            ).eq("conversation_id", cid).limit(1).execute().data or []
+
+        def state_row():
+            try:
+                return self.client.table("conversations").select("state").eq(
+                    "id", cid
+                ).maybe_single().execute().data
+            except APIError as exc:
+                if not _is_missing_schema_error(exc):
+                    raise
+                logger.warning(
+                    "Hayat orchestration migration is pending; using legacy conversation state."
+                )
+                return None
+
+        response, message_rows, facts, consultation, state = _parallel(
+            owner, messages, facts_latest, consultation_row, state_row
+        )
         data = getattr(response, "data", None)
         if not data:
             raise PermissionError("Conversation does not belong to this session.")
-        message_rows = self.client.table("messages").select(
-            "id,conversation_id,role,content,language,sequence,created_at"
-        ).eq("conversation_id", str(conversation_id)).order("sequence").execute().data or []
-        facts = self.client.table("case_facts").select("id,facts").eq(
-            "conversation_id", str(conversation_id)
-        ).order("version", desc=True).limit(1).execute().data or []
-        consultation = self.client.table("consultation_requests").select(
-            "id"
-        ).eq("conversation_id", str(conversation_id)).limit(1).execute().data or []
         conversation = Conversation(_uuid(data["id"]), session_id)
         conversation.messages = [self._message(row) for row in message_rows]
         case_facts_id = facts[0].get("id") if facts else None
         conversation.case_facts = (facts[0].get("facts") or {}) if facts else {}
         conversation.consultation_id = _uuid(consultation[0]["id"]) if consultation else None
-        try:
-            state = self.client.table("conversations").select("state").eq(
-                "id", str(conversation_id)
-            ).maybe_single().execute().data
-        except APIError as exc:
-            if not _is_missing_schema_error(exc):
-                raise
-            logger.warning(
-                "Hayat orchestration migration is pending; using legacy conversation state."
-            )
-            state = None
         conversation.state = (state or {}).get("state", "requested")
         try:
-            versions_query = self.client.table("case_fact_versions").select(
-                "version,facts"
-            )
             if case_facts_id:
-                versions = versions_query.eq(
-                    "case_facts_id", str(case_facts_id)
-                ).order("version").execute().data or []
+                versions = self.client.table("case_fact_versions").select(
+                    "version,facts"
+                ).eq("case_facts_id", str(case_facts_id)).order("version").execute().data or []
             else:
                 versions = []
         except APIError as exc:
@@ -213,16 +237,20 @@ class SupabaseStore:
             field for field in required
             if self._fact_present(conversation, field)
         ]
-        lead = self.lead_for(conversation.id)
+        lead, consent_ok, request_status = _parallel(
+            lambda: self.lead_for(conversation.id),
+            lambda: self.has_valid_consent(
+                conversation.session_id, "consultation_processing"
+            ),
+            lambda: self._consultation_status(conversation.consultation_id),
+        )
         return ConsultationProgress(
             required_fields=required,
             collected_fields=collected,
             missing_fields=[field for field in required if field not in collected],
-            consent_granted=self.has_valid_consent(
-                conversation.session_id, "consultation_processing"
-            ),
+            consent_granted=consent_ok,
             phone_verified=bool(lead and lead.phone_verified),
-            request_status=self._consultation_status(conversation.consultation_id),
+            request_status=request_status,
         )
 
     @staticmethod
@@ -269,14 +297,21 @@ class SupabaseStore:
 
     def append_message(self, conversation: Conversation, role: str, content: str,
                        language: str) -> Message:
-        existing = self.client.table("messages").select("sequence").eq(
-            "conversation_id", str(conversation.id)
-        ).order("sequence", desc=True).limit(1).execute().data or []
-        sequence = int(existing[0]["sequence"]) + 1 if existing else 1
-        data = _row(self.client.table("messages").insert({
+        # The conversation was loaded this request, so its last sequence number is
+        # already known; only fall back to a lookup if the insert collides.
+        sequence = max((m.sequence for m in conversation.messages), default=0) + 1
+        row = {
             "conversation_id": str(conversation.id), "role": role,
-            "content": content, "language": language, "sequence": sequence,
-        }).execute())
+            "content": content, "language": language,
+        }
+        try:
+            data = _row(self.client.table("messages").insert({**row, "sequence": sequence}).execute())
+        except APIError:
+            existing = self.client.table("messages").select("sequence").eq(
+                "conversation_id", str(conversation.id)
+            ).order("sequence", desc=True).limit(1).execute().data or []
+            sequence = int(existing[0]["sequence"]) + 1 if existing else 1
+            data = _row(self.client.table("messages").insert({**row, "sequence": sequence}).execute())
         message = self._message({**data, "sequence": data.get("sequence", sequence),
                                  "language": data.get("language", language)})
         conversation.messages.append(message)

@@ -139,6 +139,7 @@ def inspect_input(
     pending_field: str | None = None,
     extracted_facts: list[Any] | None = None,
     language: str = "en",
+    allow_clinical_context: bool = False,
 ) -> GuardrailDecision:
     """Return a deterministic policy decision for user text grounded in the governing specification."""
     session_id = getattr(conversation, "session_id", uuid4())
@@ -155,6 +156,7 @@ def inspect_input(
         language=language,
         is_locked_emergency=is_locked_emergency,
         is_locked_crisis=is_locked_crisis,
+        allow_clinical_context=allow_clinical_context,
     )
 
     if decision.blocked:
@@ -255,8 +257,10 @@ def redact_message(text: str) -> str:
     return global_policy_engine.redact_unsolicited_content(text)[0]
 
 
-def validate_output(text: str, language: str = "en") -> str:
+def validate_output(text: str, language: str = "en", allow_diagnosis_question: bool = False) -> str:
     """Sanitize model output using the authoritative policy engine."""
     if not isinstance(text, str) or not text.strip():
         raise ValueError("Model output must be non-empty text.")
-    return global_policy_engine.validate_outbound(text, language=language)
+    return global_policy_engine.validate_outbound(
+        text, language=language, allow_diagnosis_question=allow_diagnosis_question
+    )

@@ -24,3 +24,10 @@ data/
 
 # Output written by the QA scripts in scripts/qa/.
 *_results.json
+
+.venv*/
+.streamlit/secrets.toml
+
+# Database exports (may contain visitor data): never commit.
+supabase_audit_export/
+qa_voice_tmp/

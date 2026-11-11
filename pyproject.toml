@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "meer3305", email = "meeraymaanali@gmail.com" }
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.143.3",
     "firebase-admin>=7.1.0",
