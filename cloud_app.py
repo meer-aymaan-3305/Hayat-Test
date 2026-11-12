@@ -31,8 +31,15 @@ def _backend_url() -> str:
 
 
 # Shared password for the team. Set APP_PASSWORD in the app secrets.
+# Fail closed: without it the app must not be reachable at all.
 expected_password = os.environ.get("APP_PASSWORD", "")
-if expected_password and not st.session_state.get("team_access_ok"):
+if not expected_password:
+    st.error(
+        "This app is not configured yet: APP_PASSWORD is missing. "
+        "Ask the project owner to add it under Settings -> Secrets."
+    )
+    st.stop()
+if not st.session_state.get("team_access_ok"):
     st.title("Hayat team test")
     with st.form("team_login"):
         entered = st.text_input("Team password", type="password")

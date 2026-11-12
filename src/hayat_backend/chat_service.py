@@ -2188,8 +2188,11 @@ class ChatService:
                         reply = _clarify(language, conversation, text)
                 # Say "Understood — you're interested in …" once; on later turns a
                 # short thanks keeps the conversation from sounding scripted.
-                if reply.startswith(("Understood — you're interested in", "مفهوم — أنت مهتم")) and any(
-                    m.role == "assistant" and reply in m.content for m in conversation.messages[:-1]
+                # Stored messages are already humanized (em dash -> comma), so the
+                # comparison must run on the humanized form or it never matches.
+                flat_ack = humanize_reply(reply)
+                if flat_ack.startswith(("Understood, you're interested in", "مفهوم, أنت مهتم")) and any(
+                    m.role == "assistant" and flat_ack in m.content for m in conversation.messages[:-1]
                 ):
                     reply = "Thank you, noted." if language == "en" else "شكراً، تم تسجيل ذلك."
 
