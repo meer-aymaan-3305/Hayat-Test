@@ -1933,9 +1933,15 @@ class ChatService:
             chunks = [chunk for _, chunk in scored_chunks]
             # Stale or old documents can still say AAfiya or Medical Advisor: correct them first.
             knowledge = house_style("\n\n".join(chunk.text for chunk in chunks))
-            if analysis is not None and analysis.intent in {"answering", "declines", "off_topic"}:
+            if (
+                analysis is not None
+                and analysis.intent in {"answering", "declines", "off_topic"}
+                and not _PROGRAMME_NAME_RE.search(text)
+            ):
                 # A plain answer to the flow's question needs no company evidence;
                 # leaving it out saves tokens and stops the model embellishing.
+                # A named programme is never "off-topic" evidence-wise: the model
+                # must still see the catalogue or it denies knowing Zoé exists.
                 knowledge = ""
             prior_history = [
                 {"role": message.role, "content": message.content}
