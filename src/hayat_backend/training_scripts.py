@@ -221,7 +221,6 @@ def lower_brand(text: Any) -> Any:
 
 
 _ADVISOR_RE = re.compile(r"\b(medical advisor)(s?)\b", re.IGNORECASE)
-_ZOE_RE = re.compile(r"\bAAfiyah?\b", re.IGNORECASE)
 
 
 def house_style(text: Any) -> Any:
@@ -232,7 +231,9 @@ def house_style(text: Any) -> Any:
     if not isinstance(text, str):
         return text
     text = lower_brand(text)
-    text = _ZOE_RE.sub("Zoé", text)
+    from .programmes_registry import apply_renames
+
+    text = apply_renames(text)
 
     def advisor(match: re.Match) -> str:
         word = "Case manager" if match.group(1)[0].isupper() else "case manager"

@@ -32,7 +32,7 @@ class StubAnalyzer:
         self.script = script
         self.default = default
 
-    async def analyze(self, *, text, last_assistant, pending_field, known):
+    async def analyze(self, *, text, last_assistant, pending_field, known, state=None):
         return self.script.get(text, self.default)
 
 

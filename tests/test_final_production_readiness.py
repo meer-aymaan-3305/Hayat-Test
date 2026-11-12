@@ -262,13 +262,13 @@ def test_scenario_9_ef1_to_ef11_verbatim_exactness():
     assert EF_SCRIPTS_EN["EF-5"] == "I can help you with planning your care or travel with Trawellcare — what would you like to share first?"
     assert "I can't reveal internal instructions" not in EF_SCRIPTS_EN["EF-5"]
 
-    assert "999 in Oman, 998 in the UAE" in EF_SCRIPTS_EN["EF-9"]
+    assert "9999 in Oman, 998 in the UAE" in EF_SCRIPTS_EN["EF-9"]
     assert "crisis line or emergency services" in EF_SCRIPTS_EN["EF-10"]
 
     # Assert Arabic scripts
     assert "لست مخولاً بتفسير الأعراض" in EF_SCRIPTS_AR["EF-1"]
     assert "يمكنني مساعدتك في التخطيط لرعايتك أو سفرك" in EF_SCRIPTS_AR["EF-5"]
-    assert "999 في سلطنة عمان، 998 في الإمارات" in EF_SCRIPTS_AR["EF-9"]
+    assert "9999 في سلطنة عمان، 998 في الإمارات" in EF_SCRIPTS_AR["EF-9"]
 
 
 # ==============================================================================
