@@ -454,9 +454,27 @@ def _time_greeting(language: str, hour: int | None) -> str:
     return "مساء الخير" if language == "ar" else "Good evening"
 
 
-def greeting(language: str, hour: int | None = None) -> str:
+def greeting(language: str, hour: int | None = None, handoff: bool = False) -> str:
     """Warm opening. Keeps the CP-1 substance: AI assistant, not a medical professional."""
     hello = _time_greeting(language, hour)
+    if handoff:
+        # S1 from the enhanced training document: AI disclosure, no name request yet.
+        feeling = {
+            "Good morning": "How is your morning going?",
+            "Good afternoon": "How has your day been?",
+            "Good evening": "How is your evening going?",
+        }.get(hello, "How are you doing today?")
+        if language == "ar":
+            return (
+                f"{hello}! 😊 أنا حياة، مساعدة ترافيل كير الذكية للصحة والعافية. يمكنني مساعدتك "
+                "في استكشاف خيارات الرعاية الصحية وتجارب العافية، وإرشادك إلى الأشخاص المناسبين "
+                "في فريقنا. كيف حالك اليوم؟"
+            )
+        return (
+            f"{hello}! 😊 I'm Hayat, trawellcare's AI concierge for health and wellness "
+            "journeys. I can help you explore healthcare options and wellness experiences, "
+            f"and guide you to the right people on our team. {feeling}"
+        )
     if language == "ar":
         return (
             f"{hello}! 😊 كيف حالك اليوم؟ أنا حياة، مساعدتك الذكية للصحة والعافية في ترافيل كير. "
@@ -644,11 +662,18 @@ _SLOT_FIELDS = {
     "condition_context_for_advisor", "medical_reports_available",
     "current_country", "callback_time", "email",
     "preferred_timing", "destination_preference",
+    "preferred_name", "preferred_programme", "trip_duration", "wellness_goal",
+    "preferred_provider",
 }
 # Slots that already have dedicated extractors; the generic fallback only runs
 # for them in extended-intake mode.
 _CORE_SLOTS = {"preferred_timing", "destination_preference"}
 _SKIP_VALUES = {
+    "preferred_name": "declined",
+    "preferred_programme": "Undecided",
+    "trip_duration": "Flexible",
+    "wellness_goal": "Not specified",
+    "preferred_provider": "None",
     "budget_range": "Flexible / not decided",
     "travellers_count": "Not specified",
     "accommodation_preference": "No preference",
@@ -673,6 +698,11 @@ _GOAL_KEYWORDS = {
     "destination_preference": r"destination|country|where would you|which place|location",
     "phone_number": r"phone|number|whatsapp|mobile",
     "name": r"your name|call you",
+    "preferred_name": r"call you|what to call",
+    "preferred_programme": r"programme|hayat.?100|aafiya|ffounders",
+    "trip_duration": r"how long|duration|days|weeks|away for",
+    "wellness_goal": r"feeling|goal|home with|hoping",
+    "preferred_provider": r"hospital|doctor",
 }
 
 
@@ -709,6 +739,11 @@ _SLOT_SKIP_VALUE = {
     "email": "Not provided",
     "preferred_timing": "Flexible",
     "destination_preference": "Flexible (open to suggestions)",
+    "preferred_name": "declined",
+    "preferred_programme": "Undecided",
+    "trip_duration": "Flexible",
+    "wellness_goal": "Not specified",
+    "preferred_provider": "None",
 }
 
 
@@ -740,6 +775,14 @@ def _slot_value(field: str, text: str) -> str | None:
         return _SLOT_SKIP_VALUE[field]
     if field == "email":
         return None  # a real address is picked up by the email extractor
+    if field == "preferred_name":
+        cleaned = re.sub(
+            r"^(?:you can |please )?(?:call me|my name is|it's|its|i'm|i am)\s+", "", clean, flags=re.I
+        ).strip(" .,!")
+        words = cleaned.split()
+        if 1 <= len(words) <= 2 and all(re.fullmatch(r"[A-Za-z\u0600-\u06ff'-]+", w) for w in words):
+            return words[0].title()
+        return None
     if field == "travellers_count":
         if re.search(r"\b(alone|solo|myself|just me|only me|by myself)\b", clean, re.I):
             return "1 (travelling alone)"
@@ -776,10 +819,41 @@ def humanize_reply(reply: str) -> str:
     return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
+# Signup handoff mode: contact details, consent, diagnosis and reports are never taken in
+# chat. They belong to signup or login (enhanced training document, B0 and B2).
+_HANDOFF_BLOCKED = {
+    "name", "phone_number", "email", "preferred_contact_method", "contact_channel_preference",
+    "timezone", "callback_time", "medical_reports_available", "condition_context_for_advisor",
+    "accommodation_preference", "treatment_objective",
+}
+
+
+def _handoff_filter(facts: list[FactValue]) -> list[FactValue]:
+    """Keep only what Hayat may collect; a stated name becomes an optional first name."""
+    kept: list[FactValue] = []
+    for fact in facts:
+        if fact.field_name == "name" and isinstance(fact.value, str) and fact.value.strip():
+            first = re.sub(r"[^A-Za-z\u0600-\u06ff'-]", "", fact.value.strip().split()[0])
+            if first:
+                kept.append(fact.model_copy(update={"field_name": "preferred_name", "value": first.title()}))
+            continue
+        if fact.field_name in _HANDOFF_BLOCKED:
+            continue
+        if fact.field_name == "preferred_name" and isinstance(fact.value, str):
+            parts = fact.value.strip().split()
+            if fact.value.strip().lower() == "declined" or not parts:
+                fact = fact.model_copy(update={"value": "declined"})
+            else:
+                fact = fact.model_copy(update={"value": parts[0].title()})
+        kept.append(fact)
+    return kept
+
+
 _ANALYZER_CONTEXT_FIELDS = {
     "customer_category", "procedure_or_service", "wellness_programme_or_goal",
     "destination_preference", "preferred_timing", "budget_range", "travellers_count",
-    "accommodation_preference", "current_country", "name",
+    "accommodation_preference", "current_country", "name", "preferred_name",
+    "preferred_programme", "trip_duration", "wellness_goal", "preferred_provider",
 }
 _CONTACT_FIELDS = {"email", "phone_number", "name", "timezone"}
 _ANALYSIS_ALIASES = {
@@ -798,7 +872,7 @@ def _merge_analysis(
 
     A pure question never records preferences (naming Germany in a question is not a
     destination choice). The model's cleaner values replace slot-filled raw text."""
-    if analysis.intent in {"question", "smalltalk", "off_topic", "emotional", "wants_human"}:
+    if analysis.intent not in {"answering", "mixed", "declines"}:
         keep_diagnosis = analysis.intent == "question"
         facts = [
             f for f in facts
@@ -844,10 +918,122 @@ def _merge_analysis(
     return list(merged.values())
 
 
-def _turn_instruction(plan: Any, analysis: TurnAnalysis | None) -> str:
+_HANDOFF_RULES = (
+    "\nMODE: signup handoff. These rules come from the trawellcare training document and "
+    "override anything above. You are Hayat, trawellcare's AI assistant; never claim or imply "
+    "you are human. Never ask for or record diagnoses, symptoms, medications, test results, "
+    "medical history or whether they have reports. Never take full names, phone numbers, "
+    "emails, callback times, passwords, one time codes, card or ID numbers in chat; those "
+    "happen at signup or login, and consent is only ever given on screen controls. If they "
+    "paste such a value, do not repeat it. Do not repeat your introduction or greeting. Never "
+    "confirm a hospital, treatment, provider, flight, visa or booking until the team has "
+    "verified it, and never recommend hospitals, doctors or treatments. Say nothing about "
+    "wellness programmes beyond what the approved evidence contains; if it is not there, say "
+    "you do not have it and the team can explain. Do not store or comment on their mood. "
+    "Never promise a call or a callback: the free consultation or call is booked after they "
+    "create an account or log in. Never write a web address, link or URL unless one is given "
+    "to you in these instructions. Do not offer or mention the signup step on your own: only "
+    "when the conversation policy tells you to."
+)
+
+
+_INTENT_GUIDANCE = {
+    "clinical_detail": (
+        "they shared a diagnosis, symptom or medical detail: thank them warmly for trusting "
+        "you with it, say the specifics are best looked at privately by one of our medical "
+        "advisors so you will keep them out of the enquiry summary, and do not comment on it"
+    ),
+    "asks_interpretation": (
+        "they asked you to read a report or explain a symptom: say kindly you cannot "
+        "interpret reports or symptoms and would not want to guess about something so "
+        "important, a medical advisor can go through it in the free consultation, and "
+        "documents can be shared securely once their free account is set up"
+    ),
+    "contact_request": (
+        "they offered or asked to be contacted by phone, WhatsApp or email: thank them for "
+        "wanting to share, say that to keep their details safe you cannot take contact "
+        "information here in the chat and so have not saved it, and that when they create "
+        "their free account they can add it securely and choose exactly how and where we "
+        "reach them"
+    ),
+    "asks_if_human": (
+        "they asked if you are a person: say you are Hayat, trawellcare's AI assistant, and "
+        "that the team behind you are real people who will be glad to speak with them in the "
+        "free consultation"
+    ),
+}
+
+
+def _turn_instruction(
+    plan: Any, analysis: TurnAnalysis | None, *, category: str | None = None,
+    signup_url: str | None = None, support: str | None = None, handoff: bool = False,
+) -> str:
     """What this particular turn should do, written for the reply model."""
     intent = analysis.intent if analysis else None
     question = plan.question_text
+    guidance = _INTENT_GUIDANCE.get(intent or "", "")
+    first = f"\nFirst, deal with this: {guidance}." if guidance else ""
+    signup = (
+        f" The signup and login page address is {signup_url} and you may share exactly that."
+        if signup_url
+        else " You do not have a web address: say the signup and login option is on the "
+        "trawellcare website, and do not write any link."
+    )
+    kind = plan.decision_type
+    if kind == "stop_intake":
+        return (
+            "\nConversation policy: the visitor says they are under 18. In a kind, short "
+            "reply say that our services are for adults so you cannot continue this enquiry "
+            "here, and that if they are planning something with a parent or guardian, that "
+            "person is welcome to create an account and speak with our team. Ask no questions."
+        )
+    if kind == "opt_out":
+        return (
+            "\nConversation policy: the visitor asked us to stop messaging them or to forget "
+            "them. Say you understand and thank them, that you will pass that on straight away "
+            "so we stop contacting them, that they can change their choices any time in their "
+            "account settings, and for a request to delete their information you will point "
+            "them to the privacy request page so the right team can take care of it. Ask no "
+            "questions."
+        )
+    if kind == "human_request":
+        return (
+            first + "\nConversation policy: the visitor wants a person right now. Say absolutely, the "
+            "quickest route is to book the free consultation after they log in or create "
+            "their free account." + signup
+            + (f" If they would rather reach the team directly they can use {support}." if support else "")
+            + " Do not take contact details in chat. Ask no other question."
+        )
+    if kind == "handoff_link":
+        return (
+            "\nConversation policy: they agreed to the signup step. Warmly give them the way "
+            "to create their free trawellcare account or log in, which also lets them book "
+            "the free " + ("consultation with a Medical Advisor" if category == "medical_treatment"
+                           else "call with a wellness curator") + "." + signup
+            + " Do not take any contact details here and ask no question."
+        )
+    if kind == "handoff_declined":
+        return (
+            "\nConversation policy: they declined the signup step. Say of course there is no "
+            "pressure at all, the signup and login page is there whenever they are ready, and "
+            "you are here if any questions come up. Do not push and ask no question."
+        )
+    if kind == "signup_handoff":
+        who = (
+            "a free consultation with one of our medical advisors, who can talk through their "
+            "options" if category == "medical_treatment"
+            else "a free call with our wellness curator, who can shape this with them"
+            if category == "wellness"
+            else "a free consultation with the right person on our team"
+        )
+        return (
+            first + "\nConversation policy: the visitor has shared enough. In a warm, short reply, "
+            "acknowledge what they shared, then say the best next step is " + who
+            + ". To arrange it they create a free trawellcare account or log in, which also "
+            "keeps their details and any documents safe and lets them choose how we contact "
+            "them. End by asking once whether you should take them to the signup and login "
+            "page now." + signup + " Do not take contact details in chat."
+        )
     if plan.decision_type == "post_submission":
         return (
             "\nConversation policy: the visitor's enquiry is ALREADY submitted to the "
@@ -876,6 +1062,7 @@ def _turn_instruction(plan: Any, analysis: TurnAnalysis | None) -> str:
             + (" (they asked to speak with a person)" if intent == "wants_human" else "")
             + (" (they want an additional service: acknowledge it and say it is added to "
                "their enquiry for the coordinator)" if intent == "new_request" else "")
+            + (f" ({guidance})" if guidance else "")
             + ". Respond to THAT first, directly and helpfully, using the approved "
             "evidence. Being genuinely useful matters more than being brief here: "
             "up to 3 short sentences, in plain conversational words. If the evidence "
@@ -917,9 +1104,13 @@ class ChatService:
                 self.analyzer = TurnAnalyzer(_cfg)
             except Exception:
                 self.analyzer = None
+        self.handoff = bool(_cfg.signup_handoff and _cfg.extended_intake)
+        self.signup_url = _cfg.signup_url
+        self.support_contact = _cfg.support_contact
         self.question_planner = QuestionPlanner(
             extended=bool(_cfg.extended_intake),
-            collect_diagnosis=self.collect_diagnosis,
+            collect_diagnosis=self.collect_diagnosis and not self.handoff,
+            handoff=self.handoff,
         )
         self.crm_client = crm_client if crm_client is not None else CRMWebhookClient()
         self.coordinator_service = (
@@ -1295,7 +1486,7 @@ class ChatService:
 
         # Disambiguation & semantic mapping of short contextual answers relative to previous questions
         clarification_reply: str | None = None
-        custom_suggestions: list[ChatAction] | None = None
+        custom_suggestions: list[ChatAction] | None = [] if self.handoff else None
 
         if _SHORT_ANSWER_RE.search(text) and len(prior_questions) >= 2:
             last_lower = last_assistant_content.lower()
@@ -1349,6 +1540,8 @@ class ChatService:
         all_facts = self._skip_if_stuck(conversation, pending_field, all_facts, user_message.id)
         if analysis is not None:
             all_facts = _merge_analysis(all_facts, analysis, user_message.id, conversation, pending_field)
+        if self.handoff:
+            all_facts = _handoff_filter(all_facts)
 
         # Handle category switching (medical <-> wellness)
         new_category = next((f.value for f in all_facts if f.field_name == "customer_category"), None)
@@ -1405,7 +1598,10 @@ class ChatService:
             ),
         )
 
-        if decision.reason == "out_of_scope" and analysis is not None:
+        if analysis is not None and (
+            decision.reason == "out_of_scope"
+            or (self.handoff and decision.reason in {"unsolicited_clinical_detail", "medical_advice"})
+        ):
             # In guided mode the model's reading decides what is on topic. The keyword
             # rule behind this canned refusal cannot tell "do you cover dental?" from
             # "who is the president?", so the reply model words the answer or the decline.
@@ -1549,11 +1745,14 @@ class ChatService:
             elif _DOC_SUMMARY_RE.search(text):
                 clarification_reply = _document_overview_reply(document_context, language)
 
-        consent_granted = self._persist_conversational_data(
-            conversation, text, language
+        # Consent and contact details are never taken from free text in handoff mode.
+        consent_granted = (
+            False if self.handoff
+            else self._persist_conversational_data(conversation, text, language)
         )
-        submission = self._try_submit_conversational_request(
-            conversation, text
+        submission = (
+            None if self.handoff
+            else self._try_submit_conversational_request(conversation, text)
         )
         progress = self.store.consultation_progress(conversation)
         plan = self.question_planner.plan(
@@ -1561,6 +1760,28 @@ class ChatService:
             visitor=visitor, intent=analysis.intent if analysis else None,
             submitted=bool(conversation.consultation_id),
         )
+        if self.handoff:
+            assistants_after = sum(1 for m in conversation.messages if m.role == "assistant") + 1
+            state_facts: list[FactValue] = []
+
+            def mark(name: str, value: str) -> None:
+                state_facts.append(FactValue(
+                    field_name=name, value=value, status=FactStatus.CONFIRMED,
+                    source_message_id=user_message.id, confidence=1.0,
+                ))
+
+            if plan.decision_type == "signup_handoff":
+                mark("handoff_offered", "yes")
+                mark("handoff_offer_turn", str(assistants_after))
+            elif plan.decision_type == "handoff_declined":
+                mark("handoff_declined", "yes")
+            elif plan.decision_type == "stop_intake":
+                mark("under_18", "yes")
+            elif plan.decision_type == "opt_out":
+                mark("opt_out_requested", "yes")
+                logger.warning("opt_out_requested conversation=%s", conversation.id)
+            if state_facts:
+                self.store.save_fact_updates(conversation, state_facts)
         if submission is not None:
             plan = type(plan)(
                 decision_type="pending_confirmation",
@@ -1682,14 +1903,20 @@ class ChatService:
                     f"\nALREADY KNOWN DETAILS (do NOT ask for any of these again): {known_str}."
                     if known_str else ""
                 )
-                + _turn_instruction(plan, analysis)
+                + _turn_instruction(
+                    plan, analysis,
+                    category=conversation.case_facts.get("customer_category"),
+                    signup_url=self.signup_url, support=self.support_contact,
+                    handoff=self.handoff,
+                )
+                + (_HANDOFF_RULES if self.handoff else "")
                 + (
                     "\n7. Never promise a phone call, a callback time or that someone will "
                     "contact the visitor unless they have already shared and verified their "
                     "number and agreed to share their details. Say instead that a coordinator "
                     "personally reviews every enquiry and reaches out after the details are "
                     "shared."
-                    if self.question_planner.extended else ""
+                    if self.question_planner.extended and not self.handoff else ""
                 )
             )
             if knowledge:
@@ -2529,6 +2756,7 @@ class ChatService:
         # never treated as answers.
         if (
             slot_fill
+            and redact_message(text) == text  # anything redacted is never stored as an answer
             and pending_field in _SLOT_FIELDS
             and not any(f.field_name == pending_field for f in updates)
             and (pending_field not in _CORE_SLOTS or get_settings().extended_intake)

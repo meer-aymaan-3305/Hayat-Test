@@ -1,17 +1,21 @@
-How Trawellcare works: the complete customer journey in five stages.
+How trawellcare works: the customer journey in five stages.
 
-Stage 1, discovery and enquiry. It starts with understanding what the visitor is looking for. This could be a medical treatment, a rejuvenating wellness retreat, a longevity programme or a fitness experience. Hayat, the AI health and wellness concierge, has a friendly conversation to understand their needs, preferences and budget, and captures the enquiry for the team.
+Stage 1, discover and understand. It starts with understanding what the visitor is looking for, whether that is a medical treatment, a restful retreat, a longevity programme or a fitness experience. Hayat, trawellcare's AI health and wellness concierge, has a friendly conversation to understand their needs, preferences and budget.
 
-Stage 2, matching. Trawellcare's intelligent care matching system works alongside Hayat to help identify experiences, providers and destinations that fit the visitor's needs, preferences and budget. Hayat gathers the information. The matching system and the human team do the matching. Hayat never chooses or recommends a specific hospital, doctor or treatment.
+Stage 2, match and curate. Trawellcare's intelligent care matching system, called Dawood, works from the visitor's requirements to shortlist suitable options, providers and destinations, and trawellcare's team reviews them. For medical journeys this follows the free consultation, and the options are reviewed by people before the visitor sees them. Hayat does not herself choose or recommend hospitals, doctors or treatments.
 
-Stage 3, coordination. Once the visitor finds what feels right, the Trawellcare team helps coordinate the journey, including consultations, bookings, visas, flights, accommodation, transfers and concierge services. For medical travel, Trawellcare can arrange a complimentary consultation with a Medical Advisor to understand the visitor's requirements and guide them through the available options. For wellness, a wellness curator prepares a tailored proposal.
+Stage 3, coordinate the journey. The team helps coordinate consultations, bookings, visas, flights, accommodation, transfers and concierge services.
 
-Stage 4, the experience. The visitor enjoys their chosen treatment or wellness experience with coordinated support throughout the journey.
+Stage 4, experience. The visitor enjoys their treatment or wellness programme with coordinated support throughout.
 
-Stage 5, aftercare. Trawellcare keeps the visitor connected through aftercare, follow ups and ongoing wellness support. The relationship does not end when the trip ends. Trawellcare is a companion through the whole healthcare and wellness journey, from discovery to recovery and beyond.
+Stage 5, aftercare. Trawellcare stays in touch with aftercare, follow ups and ongoing wellness support, through the channels the visitor chooses.
 
-Medical travel versus wellness travel. Medical travel focuses on cross border care with approved hospitals and doctors, human review and travel coordination. Wellness travel focuses on destination flexible, curated retreats and programmes such as HAYAT-100, AAfiya and FFounders.
+Roles. Hayat is the conversational assistant that understands needs, explains trawellcare and guides visitors to the free consultation. Dawood is the intelligent care matching system that shortlists options, which trawellcare's team review.
 
-Important: nothing is confirmed until it has been verified. A particular hospital, treatment, provider, flight, visa or booking is never promised or confirmed by Hayat. A human coordinator verifies and confirms. Registering interest or sharing details is free and is not a booking or payment commitment.
+Medical travel versus wellness travel. Medical travel focuses on cross border care with approved hospitals and doctors, human review and travel coordination, and starts with a free consultation with one of trawellcare's medical advisors. Wellness travel focuses on curated retreats and programmes such as HAYAT 100 for longevity and healthy ageing, AAfiya for women's wellness, and FFounders for executive fitness and wellness, and starts with a free call with a wellness curator who shapes the programme with the visitor.
 
-What happens after a visitor registers. The visitor confirms their details, the enquiry is shared with the Trawellcare coordination team with their permission, and a coordinator reviews the conversation and reaches out to discuss next steps.
+Free account and free consultation. To book the free consultation or call, the visitor creates a free trawellcare account or logs in. The account keeps their details and documents safe and lets them choose how trawellcare contacts them: WhatsApp, email or phone. Trawellcare only reaches out in the ways the visitor says yes to. Contact details, scheduling and communication preferences are all handled after login, never in the chat. Documents are shared securely in the upload area after signup.
+
+Nothing is confirmed until it is verified. A particular hospital, treatment, provider, flight, visa or booking is never promised or confirmed by Hayat. The team verifies and confirms. Registering interest is free and is not a booking or payment commitment.
+
+What happens after a visitor signs up. They create their free account, choose how they would like to be contacted, and book the free consultation or call. A medical advisor or wellness curator then talks through their options with them.

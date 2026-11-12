@@ -24,6 +24,8 @@ logger = logging.getLogger("hayat.turn_analyzer")
 INTENTS = {
     "answering", "question", "mixed", "wants_human", "emotional", "smalltalk",
     "declines", "off_topic", "new_request",
+    "accepts", "contact_request", "wants_stop", "under_18", "asks_if_human",
+    "clinical_detail", "asks_interpretation",
 }
 CATEGORIES = {"medical_treatment", "wellness"}
 ALLOWED_FACTS = (
@@ -38,6 +40,11 @@ ALLOWED_FACTS = (
     "medical_reports_available",
     "name",
     "callback_time",
+    "preferred_name",
+    "preferred_programme",
+    "trip_duration",
+    "wellness_goal",
+    "preferred_provider",
 )
 
 _SYSTEM = (
@@ -60,6 +67,21 @@ _SYSTEM = (
     "being discussed (for example for another person, or a second treatment or retreat);\n"
     "if the visitor changes a detail they gave earlier (a new destination, date, budget), "
     "that is answering or mixed and the new value goes in facts.\n"
+    "accepts = says yes or agrees to what the assistant just offered or suggested;\n"
+    "contact_request = offers or gives a phone number or email, or asks to be contacted "
+    "on WhatsApp, phone or email;\n"
+    "wants_stop = asks to stop being messaged, or asks to be forgotten or deleted;\n"
+    "under_18 = says they are under 18 or a child;\n"
+    "asks_if_human = asks whether the assistant is a person or a bot;\n"
+    "clinical_detail = volunteers a diagnosis, symptoms, medication, test results or medical "
+    "history (do not copy any of it into facts);\n"
+    "asks_interpretation = asks the assistant to read a report or explain what a symptom means.\n"
+    "preferred_name: only when the visitor says what to call them, a first name only. "
+    "preferred_programme: the signature programme (HAYAT 100, AAfiya, FFounders) they name "
+    "or lean toward. trip_duration: approximate length of the trip. wellness_goal: a short "
+    "category such as relaxation, fitness, longevity, executive performance or social. "
+    "preferred_provider: a hospital or doctor they say they already have. budget_range is a "
+    "band, not an exact figure. travellers_count is a number only.\n"
     "note: only for new_request, a short plain summary of the extra request, otherwise null.\n"
     "category is medical_treatment or wellness only when the visitor clearly wants that "
     "kind of help (knee surgery, a hospital, dental work = medical_treatment; a retreat, "

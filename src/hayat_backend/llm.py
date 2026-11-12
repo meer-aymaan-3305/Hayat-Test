@@ -71,8 +71,8 @@ class GroqChatModel:
 
         if not self.settings.groq_api_key:
             raise LLMError("Groq API key is not configured.")
-        # One quick SDK retry; after that we fail over to the next model instead of waiting.
-        self._client = AsyncGroq(api_key=self.settings.groq_api_key.get_secret_value(), max_retries=1)
+        # No SDK retries or waiting: a failure moves straight on to the next model.
+        self._client = AsyncGroq(api_key=self.settings.groq_api_key.get_secret_value(), max_retries=0)
         self._fallbacks = [
             m for m in self.settings.groq_fallback_models if m != self.settings.groq_model
         ]

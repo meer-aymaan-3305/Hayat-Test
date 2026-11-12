@@ -27,10 +27,12 @@ restart) and no real SMS is sent.
 - `APP_PASSWORD` adds a second gate in the app itself. Give the password to the team.
 
 ## 4. What the team will see
-- A warm, time-aware greeting, then the guided intake: medical or wellness, specifics,
-  destination, timing, budget, travellers, name, phone, OTP, consent.
-- **OTP is a test code: 123456.** No SMS is sent.
-- Coordinator contact details stay hidden (Policy Addendum 1.1 is not approved).
+- Only the chat is shown. Hayat greets by the visitor's browser time, introduces herself as an
+  AI, optionally asks what to call them, then understands the need one question at a time.
+- She never takes contact details, diagnoses, reports or consent in chat. When enough is
+  shared (or by the fifth message, or when asked for a person) she offers the free consultation
+  (medical) or free call (wellness) through signup or login. Set `SIGNUP_URL` for the link.
+- Add `?debug=1` to the app address to see the AI connection check.
 - The knowledge Hayat answers from is in `knowledge_seed/`. Replace the files there and
   redeploy to change it.
 - The app sleeps after a period of inactivity and restarts fresh (in-memory data is lost).

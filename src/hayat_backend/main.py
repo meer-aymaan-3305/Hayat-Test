@@ -320,7 +320,7 @@ def create_app(
         conversation = store.create_conversation(payload.guest_session_id)
         session = store.get_session(payload.guest_session_id)
         greeting_message = store.append_message(
-            conversation, "assistant", greeting(session.locale, x_client_hour), session.locale
+            conversation, "assistant", greeting(session.locale, x_client_hour, handoff=settings.signup_handoff and settings.extended_intake), session.locale
         )
         actions = chat_service.initial_actions(session.locale)
         return {

@@ -7,6 +7,13 @@ import re
 from typing import Any
 
 
+# Steps whose reply is fully specified by the turn instruction: never answer-first.
+_NO_ANSWER_FIRST = {
+    "escalate", "post_submission", "stop_intake", "opt_out", "human_request",
+    "handoff_link", "handoff_declined", "signup_handoff",
+}
+
+
 @dataclass(frozen=True)
 class PlannedStep:
     decision_type: str
@@ -134,14 +141,39 @@ class QuestionPlanner:
         ("travellers_count", "number of travellers"),
         ("accommodation_preference", "accommodation preference"),
     )
+    # Signup handoff mode: only what the enhanced training document allows Hayat to collect.
+    HANDOFF_MEDICAL = (
+        ("procedure_or_service", "treatment or specialty"),
+        ("destination_preference", "destination country"),
+        ("preferred_provider", "hospital or doctor already in mind"),
+        ("preferred_timing", "timeline"),
+        ("budget_range", "budget band"),
+        ("current_country", "country of residence"),
+        ("travellers_count", "number of travellers"),
+    )
+    HANDOFF_WELLNESS = (
+        ("wellness_programme_or_goal", "type of wellness experience"),
+        ("preferred_programme", "signature programme"),
+        ("destination_preference", "destination"),
+        ("preferred_timing", "travel window"),
+        ("trip_duration", "duration"),
+        ("travellers_count", "number of participants"),
+        ("wellness_goal", "wellness goal"),
+        ("budget_range", "budget band"),
+    )
     # Asked after the number is verified; skippable.
     OPTIONAL_CONTACT = (
         ("email", "email"),
         ("callback_time", "callback time"),
     )
 
-    def __init__(self, extended: bool = False, collect_diagnosis: bool = False) -> None:
+    def __init__(
+        self, extended: bool = False, collect_diagnosis: bool = False, handoff: bool = False
+    ) -> None:
         self.extended = extended
+        # Signup handoff mode: no contact details, diagnosis or OTP in chat. Contact and
+        # consent happen at signup or login; chat ends with a free consultation offer.
+        self.handoff = bool(handoff and extended)
         self.collect_diagnosis = collect_diagnosis
         self.contact_fields = (
             ("name", "name"),
@@ -162,20 +194,27 @@ class QuestionPlanner:
         """Pick the next step. When the visitor asked or shared something rather than
         simply answering, the step is flagged answer_first so the reply deals with that
         before (and only if natural) returning to the planned question."""
-        if self.extended and submitted and not decision.escalation_required:
+        if self.extended and submitted and not self.handoff and not decision.escalation_required:
             # The enquiry is already with the team. Nothing is left to collect or submit,
             # so never loop on "shall I submit?": just help with whatever they need.
             return PlannedStep(
                 "post_submission",
                 "The enquiry was submitted; help with changes, questions or new requests.",
             )
-        step = self._plan_core(
-            text=text, conversation=conversation, decision=decision,
-            progress=progress, visitor=visitor, intent=intent,
-        )
+        if self.handoff:
+            step = self._plan_handoff(conversation, decision, intent)
+        else:
+            step = self._plan_core(
+                text=text, conversation=conversation, decision=decision,
+                progress=progress, visitor=visitor, intent=intent,
+            )
         if (
             self.extended
-            and intent in {"question", "mixed", "emotional", "smalltalk", "off_topic", "new_request"}
+            and step.decision_type not in _NO_ANSWER_FIRST
+            and intent in {
+                "question", "mixed", "emotional", "smalltalk", "off_topic", "new_request",
+                "clinical_detail", "asks_interpretation", "asks_if_human", "contact_request",
+            }
             and step.decision_type not in {"escalate"}
         ):
             return replace(step, answer_first=True)
@@ -375,6 +414,93 @@ class QuestionPlanner:
 
         return PlannedStep("answer", "No journey or consultation commitment was identified.")
 
+    def _plan_handoff(self, conversation: Any, decision: Any, intent: str | None) -> PlannedStep:
+        """Next step in signup handoff mode (see the enhanced training document)."""
+        if decision.escalation_required:
+            return PlannedStep("escalate", "Safety or policy escalation takes priority.")
+        facts = conversation.case_facts
+        messages = getattr(conversation, "messages", [])
+        assistant_count = sum(1 for m in messages if m.role == "assistant")
+        user_turns = sum(1 for m in messages if m.role == "user")
+
+        if facts.get("under_18") or intent == "under_18":
+            return PlannedStep("stop_intake", "The visitor is under 18: intake stops (S14).")
+        if intent == "wants_stop":
+            return PlannedStep("opt_out", "The visitor asked us to stop or to forget them (S11).")
+        if intent == "wants_human":
+            return PlannedStep("human_request", "The visitor wants a person now (S10).")
+
+        category = self._category(conversation)
+        offered_at = facts.get("handoff_offer_turn")
+        offer_just_made = bool(offered_at) and str(offered_at) == str(assistant_count)
+        if offer_just_made and intent == "accepts":
+            return PlannedStep("handoff_link", "They accepted: give the signup and login page.")
+        if offer_just_made and intent == "declines":
+            return PlannedStep("handoff_declined", "They declined the signup offer (S8).")
+
+        # Optional preferred first name, asked once and only when it feels natural.
+        name_asked = any(
+            m.role == "assistant" and re.search(r"(?:call you|what to call)", m.content, re.I)
+            for m in messages
+        )
+        if (
+            not name_asked and not facts.get("preferred_name") and user_turns >= 1
+            and intent not in {"question", "off_topic", "emotional", "clinical_detail"}
+        ):
+            return PlannedStep(
+                "collect_detail", "Ask for an optional preferred first name.",
+                question_goal="preferred name",
+                question_text=(
+                    "It's lovely to meet you. What would you like me to call you? A first "
+                    "name is perfect, and no worries if you'd rather not say."
+                ),
+                target_field="preferred_name",
+            )
+
+        if user_turns >= 5 and not offered_at:
+            # By the fifth visitor message the free consultation is offered regardless.
+            return PlannedStep(
+                "signup_handoff", "Fifth visitor message: offer the free consultation.",
+                question_goal="signup handoff", target_field="handoff",
+            )
+        if not category:
+            attempts = clarify_attempts(conversation)
+            return PlannedStep(
+                "clarify_category", "The visitor has not said what they are looking for.",
+                question_goal="customer category",
+                question_text=(
+                    "What brings you to trawellcare today? Is it a medical treatment you are "
+                    "exploring, or something more like a wellness experience?"
+                ) if attempts == 0 else (
+                    "Tell me in your own words what you have in mind, and I'll help from there."
+                ),
+                target_field="customer_category",
+                clarify_attempts=attempts,
+            )
+
+        funnel = self.HANDOFF_MEDICAL if category == "medical_treatment" else self.HANDOFF_WELLNESS
+        known = [f for f, _ in funnel if self._known(conversation, f)]
+        missing = next(((f, label) for f, label in funnel if not self._known(conversation, f)), None)
+        enough = len(known) >= 3 or user_turns >= 5
+        if enough and not offered_at:
+            return PlannedStep(
+                "signup_handoff", "Enough is known: offer the free consultation (S6 or S7).",
+                question_goal="signup handoff", target_field="handoff",
+            )
+        if missing:
+            field, label = missing
+            return PlannedStep(
+                "collect_detail", "A detail the visitor may share is still missing.",
+                question_goal=label, question_text=self._question_for(field, category),
+                target_field=field,
+            )
+        if not offered_at:
+            return PlannedStep(
+                "signup_handoff", "Everything is shared: offer the free consultation.",
+                question_goal="signup handoff", target_field="handoff",
+            )
+        return PlannedStep("answer", "Everything is shared and the offer was made.")
+
     def _first_missing(
         self, conversation: Any, category: str | None, *, include_contact: bool
     ) -> tuple[str, str] | None:
@@ -481,6 +607,19 @@ class QuestionPlanner:
         return None
 
     def current_pending_field(self, conversation: Any) -> str | None:
+        if self.handoff:
+            last = next(
+                (m.content for m in reversed(getattr(conversation, "messages", []))
+                 if m.role == "assistant"),
+                "",
+            )
+            if re.search(r"(?:call you|what to call)", last, re.I) and not conversation.case_facts.get("preferred_name"):
+                return "preferred_name"
+            category = self._category(conversation)
+            if not category:
+                return "customer_category"
+            funnel = self.HANDOFF_MEDICAL if category == "medical_treatment" else self.HANDOFF_WELLNESS
+            return next((f for f, _ in funnel if not self._known(conversation, f)), None)
         category = self._category(conversation)
         if self.extended:
             last = next(
@@ -515,12 +654,16 @@ class QuestionPlanner:
             "wellness_programme_or_goal": "Which wellness programme or goal interests you?",
             "destination_preference": "Which destination would you prefer, or would you like help exploring available destinations?",
             "preferred_timing": "What timeframe would suit you best?",
-            "budget_range": "Do you have a rough budget in mind? A range is perfectly fine 😊",
-            "travellers_count": "Will you be travelling on your own, or is anyone joining you?",
+            "budget_range": "Do you have a rough budget band in mind? A range is perfectly fine 😊",
+            "travellers_count": "Will it be just you, or is anyone joining you? A number is all I need.",
             "accommodation_preference": "Do you have any preferences for where you would like to stay?",
             "condition_context_for_advisor": "If you are comfortable sharing, is there an existing diagnosis our Medical Advisor should know about?",
             "medical_reports_available": "Do you have any medical reports or records handy?",
             "current_country": "Which country are you based in at the moment?",
+            "preferred_provider": "Do you already have a hospital or doctor in mind? No worries if not.",
+            "trip_duration": "Roughly how long would you like to be away for?",
+            "preferred_programme": "Does one of our signature programmes feel like a fit so far, HAYAT 100, AAfiya or FFounders, or would you like me to tell you a little about them?",
+            "wellness_goal": "Is there a particular feeling you would love to come home with, like more energy, calm or a fresh start?",
             "email": "Would you like to share an email address too? You can skip this if you prefer.",
             "callback_time": "When would be a good time for our coordinator to reach you?",
         }

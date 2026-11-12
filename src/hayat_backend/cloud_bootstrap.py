@@ -31,7 +31,8 @@ logger = logging.getLogger("hayat.cloud")
 TEST_DEFAULTS = {
     "APP_ENV": "test",
     "EXTENDED_INTAKE": "true",
-    "COLLECT_DIAGNOSIS": "true",
+    "COLLECT_DIAGNOSIS": "false",
+    "SIGNUP_HANDOFF": "true",
     "DEV_FAKE_OTP": "true",
     "MEDICAL_AI_REPLIES": "true",
     "VISITOR_ATTACHMENTS_ENABLED": "false",
