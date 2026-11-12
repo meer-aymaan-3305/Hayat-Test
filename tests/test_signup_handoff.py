@@ -453,3 +453,33 @@ def test_a_question_is_answered_first_and_the_offer_waits_for_a_plain_turn():
     assert "handoff_offered" not in conversation.case_facts
     sixth = _say(service, conversation, "thanks")
     assert conversation.case_facts.get("handoff_offered") == "yes" or sixth["next_action"] == "signup_handoff"
+
+
+# ---- the renamed programme is understood however it is typed ----------------------------------------
+def test_zoe_is_recognised_in_every_spelling_by_the_older_programme_flow():
+    from hayat_backend.memory_store import MemoryStore as Store
+    from hayat_backend.programme_service import ProgrammeConversationService
+
+    store = Store()
+    session, _ = store.create_guest_session("en")
+    conversation = store.create_conversation(session.id)
+    flow = ProgrammeConversationService(store)
+    for text in ["tell me about zoe", "Tell me about Zoé", "I want ZOE please", "what is aafiya"]:
+        assert flow.is_programme_intent(text, conversation), text
+    reply = flow.handle_programme_message(conversation=conversation, text="tell me about zoe", language="en")
+    assert "Zoé" in reply["reply"] or "AAfiya" in reply["reply"]  # shown as Zoé once stored
+
+
+def test_stale_knowledge_that_still_says_the_old_name_is_corrected_before_the_model_sees_it():
+    from hayat_backend.rag import InMemoryRetriever, KnowledgeChunk, SourceReference
+
+    stale = KnowledgeChunk(
+        text="AAFIYA is our women's wellness programme, reviewed by a Medical Advisor.",
+        source=SourceReference(document_id="old", title="Old", version="1"),
+    )
+    service, model, conversation = _service({"what is zoe?": TurnAnalysis(intent="question")})
+    service.retriever = InMemoryRetriever([stale])
+    _say(service, conversation, "what is zoe?")
+    system = model.calls[-1][0]["content"]
+    assert "Zoé is our women's wellness programme" in system
+    assert "AAFIYA" not in system.split("<evidence>")[1] and "Medical Advisor" not in system.split("<evidence>")[1]

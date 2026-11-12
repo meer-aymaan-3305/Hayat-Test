@@ -577,7 +577,7 @@ def _service_explain_reply(language: str, conversation: Any) -> str:
 
 
 _PROGRAMME_NAME_RE = re.compile(
-    r"hayat[- ]?100|aafiya|aafiyah|ffounders|f[- ]?founders|"
+    r"hayat[- ]?100|aafiya|aafiyah|zo[eé]|ffounders|f[- ]?founders|"
     r"حياة[- ]?100|فاوندرز|عافية\s+السيدات",
     re.IGNORECASE,
 )
@@ -701,7 +701,7 @@ _GOAL_KEYWORDS = {
     "phone_number": r"phone|number|whatsapp|mobile",
     "name": r"your name|call you",
     "preferred_name": r"call you|what to call",
-    "preferred_programme": r"programme|hayat.?100|aafiya|ffounders",
+    "preferred_programme": r"programme|hayat.?100|aafiya|zo[eé]|ffounders",
     "trip_duration": r"how long|duration|days|weeks|away for",
     "wellness_goal": r"feeling|goal|home with|hoping",
     "preferred_provider": r"hospital|doctor",
@@ -1931,7 +1931,8 @@ class ChatService:
         else:
             scored_chunks = await self.retriever.retrieve_scored(text, limit=2)
             chunks = [chunk for _, chunk in scored_chunks]
-            knowledge = "\n\n".join(chunk.text for chunk in chunks)
+            # Stale or old documents can still say AAfiya or Medical Advisor: correct them first.
+            knowledge = house_style("\n\n".join(chunk.text for chunk in chunks))
             if analysis is not None and analysis.intent in {"answering", "declines", "off_topic"}:
                 # A plain answer to the flow's question needs no company evidence;
                 # leaving it out saves tokens and stops the model embellishing.

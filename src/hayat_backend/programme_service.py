@@ -276,6 +276,14 @@ def registration_reply(
     return reply
 
 
+_ZOE_NAME_RE = re.compile(r"\bzo[eé]\b", re.IGNORECASE)
+
+
+def _old_name(text: str) -> str:
+    """The women's programme was AAfiya and is now Zoé; the flow below knows the old spelling."""
+    return _ZOE_NAME_RE.sub("AAfiya", text)
+
+
 class ProgrammeConversationService:
     """Manages dialogue state, preference extraction, and enquiry lifecycle
 
@@ -287,6 +295,7 @@ class ProgrammeConversationService:
 
     def is_programme_intent(self, text: str, conversation: Conversation) -> bool:
         """Determine whether the message pertains to Signature Wellness Programmes."""
+        text = _old_name(text)
         if _SWITCH_TO_MEDICAL_RE.search(text):
             return False
         if _SWITCH_TO_SIGNATURE_RE.search(text):
@@ -306,6 +315,7 @@ class ProgrammeConversationService:
         contactable: bool = False,
     ) -> dict[str, Any]:
         """Process a message within the Signature Wellness Programmes category."""
+        text = _old_name(text)
         conversation.case_facts["service_category"] = "signature_programmes"
 
         enquiry = self.store.get_programme_enquiry_for_conversation(conversation.id)
