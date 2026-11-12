@@ -33,6 +33,7 @@ TEST_DEFAULTS = {
     "EXTENDED_INTAKE": "true",
     "COLLECT_DIAGNOSIS": "false",
     "SIGNUP_HANDOFF": "true",
+    "SIGNUP_URL": "https://www.trawellcare.com/login",
     "DEV_FAKE_OTP": "true",
     "MEDICAL_AI_REPLIES": "true",
     # Visitors can upload their own documents; Hayat answers from them within the guardrails.
