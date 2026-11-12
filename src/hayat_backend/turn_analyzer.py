@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -110,10 +111,14 @@ class TurnAnalyzer:
 
         if not settings.groq_api_key:
             raise ValueError("Groq API key is not configured.")
-        # One quick retry only: a rate limit must fail open fast, never stall the chat turn.
-        self._client = AsyncGroq(api_key=settings.groq_api_key.get_secret_value(), max_retries=1)
+        # No SDK retries or waiting: a limited model is skipped and the next one is tried.
+        self._client = AsyncGroq(api_key=settings.groq_api_key.get_secret_value(), max_retries=0)
         self._model = settings.groq_analysis_model
+        self._models = [
+            self._model, *[m for m in settings.groq_fallback_models if m != self._model]
+        ]
         self._timeout = settings.groq_analysis_timeout_seconds
+        self._cooldown_until: dict[str, float] = {}
         from .llm import backup_client
 
         self._backup: OpenAICompatClient | None = backup_client(settings)
@@ -126,33 +131,40 @@ class TurnAnalyzer:
         pending_field: str | None,
         known: dict[str, Any],
     ) -> TurnAnalysis | None:
+        from groq import RateLimitError
+
         payload = {
             "assistant_last_message": last_assistant[:400],
             "pending_field": pending_field,
             "already_known": {k: str(v)[:60] for k, v in known.items()},
             "visitor_message": text[:600],
         }
-        extra: dict[str, Any] = {}
-        if self._model.startswith("openai/gpt-oss"):
-            extra["reasoning_effort"] = "low"  # keep hidden reasoning small and fast
-        try:
-            response = await self._client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": _SYSTEM},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                ],
-                temperature=0,
-                max_tokens=500,
-                response_format={"type": "json_object"},
-                timeout=self._timeout,
-                **extra,
-            )
-            data = json.loads(response.choices[0].message.content or "{}")
-        except Exception as exc:  # fail open: the rule-based path still works
-            logger.warning("turn analysis unavailable: %s", type(exc).__name__)
-            return await self._analyze_with_backup(payload)
-        return parse_analysis(data)
+        messages = [
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ]
+        for model in self._models:
+            if self._cooldown_until.get(model, 0) > time.monotonic():
+                continue
+            extra: dict[str, Any] = {}
+            max_tokens = 400
+            if model.startswith("openai/gpt-oss"):
+                extra["reasoning_effort"] = "low"  # keep hidden reasoning small and fast
+                max_tokens = 800
+            elif model.startswith("qwen/"):
+                extra["reasoning_effort"] = "none"  # no thinking: about 0.2s
+            try:
+                response = await self._client.chat.completions.create(
+                    model=model, messages=messages, temperature=0, max_tokens=max_tokens,
+                    response_format={"type": "json_object"}, timeout=self._timeout, **extra,
+                )
+                return parse_analysis(json.loads(response.choices[0].message.content or "{}"))
+            except RateLimitError:
+                self._cooldown_until[model] = time.monotonic() + 60
+                logger.warning("turn analysis: %s is rate limited, trying the next model", model)
+            except Exception as exc:  # try the next model; the rule-based path is the last resort
+                logger.warning("turn analysis failed on %s: %s", model, type(exc).__name__)
+        return await self._analyze_with_backup(payload)
 
     async def _analyze_with_backup(self, payload: dict[str, Any]) -> TurnAnalysis | None:
         if self._backup is None:

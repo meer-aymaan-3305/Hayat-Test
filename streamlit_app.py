@@ -137,35 +137,52 @@ if recording is not None:
 prompt = st.chat_input("Message Hayat")
 prompt = prompt or st.session_state.pop("pending_prompt", None)
 
+# Show the visitor's message at once, then fetch the reply while a typing indicator shows.
 if prompt:
-    payload = {
-        "conversation_id": st.session_state.conversation_id,
-        "message": prompt,
-        "client_message_id": str(uuid.uuid4()),
-    }
-    response = api.post(f"{base_url}/v1/chat", headers=_headers(), json=payload, timeout=60)
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.session_state.awaiting_reply = prompt
+    st.rerun()
+
+if st.session_state.get("awaiting_reply"):
+    pending = st.session_state.awaiting_reply
+    with st.chat_message("assistant"):
+        with st.spinner("Hayat is typing..."):
+            response = api.post(
+                f"{base_url}/v1/chat",
+                headers=_headers(),
+                json={
+                    "conversation_id": st.session_state.conversation_id,
+                    "message": pending,
+                    "client_message_id": str(uuid.uuid4()),
+                },
+                timeout=60,
+            )
+            spoken_audio = None
+            data = response.json() if response.ok else {}
+            if response.ok and st.session_state.pop("voice_turn", False):
+                message_id = (data.get("assistant_message") or {}).get("id")
+                if message_id:
+                    spoken = api.post(
+                        f"{base_url}/v1/voice/synthesize",
+                        headers=_headers(),
+                        json={"conversation_id": st.session_state.conversation_id, "message_id": message_id},
+                        timeout=60,
+                    )
+                    spoken_audio = spoken.content if spoken.ok else None
+    st.session_state.awaiting_reply = None
     if response.ok:
-        data = response.json()
-        reply = data.get("reply") or data.get("answer", "")
-        st.session_state.messages.extend(
-            [{"role": "user", "content": prompt}, {"role": "assistant", "content": reply}]
+        st.session_state.messages.append(
+            {"role": "assistant", "content": data.get("reply") or data.get("answer", "")}
         )
-        if st.session_state.pop("voice_turn", False):
-            message_id = (data.get("assistant_message") or {}).get("id")
-            if message_id:
-                spoken = api.post(
-                    f"{base_url}/v1/voice/synthesize",
-                    headers=_headers(),
-                    json={"conversation_id": st.session_state.conversation_id, "message_id": message_id},
-                    timeout=60,
-                )
-                if spoken.ok:
-                    st.session_state.pending_audio = spoken.content
+        st.session_state.pending_audio = spoken_audio
         if data.get("ai_status") == "unavailable":
             st.session_state.ai_notice = True
-        st.rerun()
     else:
-        st.error(f"Could not send the message: {_detail(response)}")
+        st.session_state.messages.append(
+            {"role": "assistant", "content": "Sorry, something went wrong on my side. Please try again."}
+        )
+        st.session_state.last_error = _detail(response)
+    st.rerun()
 
 if st.session_state.pop("ai_notice", False):
     st.caption("Hayat's AI service is busy or unavailable right now. Please try again in a minute.")

@@ -27,7 +27,7 @@ class Settings(BaseModel):
     groq_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     groq_max_tokens: int = Field(default=160, ge=1, le=4096)
     groq_timeout_seconds: float = Field(default=20.0, ge=1.0, le=120.0)
-    groq_analysis_model: str = "openai/gpt-oss-20b"
+    groq_analysis_model: str = "qwen/qwen3.8-27b"
     groq_fallback_models: list[str] = Field(default_factory=list)
     llm_fallback_base_url: str | None = None
     llm_fallback_api_key: SecretStr | None = None
@@ -116,7 +116,7 @@ def load_settings() -> Settings:
             groq_temperature=values.get("GROQ_TEMPERATURE", 0.2),
             groq_max_tokens=values.get("GROQ_MAX_TOKENS", 160),
             groq_timeout_seconds=values.get("GROQ_TIMEOUT_SECONDS", 20.0),
-            groq_analysis_model=values.get("GROQ_ANALYSIS_MODEL", "openai/gpt-oss-20b"),
+            groq_analysis_model=values.get("GROQ_ANALYSIS_MODEL", "qwen/qwen3.8-27b"),
             llm_fallback_base_url=values.get("LLM_FALLBACK_BASE_URL") or None,
             llm_fallback_api_key=values.get("LLM_FALLBACK_API_KEY") or None,
             llm_fallback_model=values.get("LLM_FALLBACK_MODEL") or None,
