@@ -87,7 +87,7 @@ class GroqChatModel:
     async def complete(self, messages: list[dict[str, str]]) -> str:
         """Ask the primary model; if it is rate limited or down, try the other Groq models
         and then the backup provider, so one account's limit never silences the chat."""
-        from groq import APIError, RateLimitError
+        from groq import APIError, AuthenticationError, RateLimitError
 
         last_error: Exception | None = None
         now = time.monotonic()
@@ -100,6 +100,10 @@ class GroqChatModel:
                 self._cooldown_until[model] = time.monotonic() + 60
                 last_error = exc
                 logger.warning("model %s is rate limited; skipping it for 60s", model)
+            except AuthenticationError as exc:
+                self._cooldown_until[model] = time.monotonic() + 300
+                last_error = exc
+                logger.warning("model %s rejected the API key; skipping it for 5 minutes", model)
             except (APIError, TimeoutError, LLMError) as exc:
                 last_error = exc
                 logger.warning("model %s failed (%s); trying the next one", model, type(exc).__name__)
@@ -163,6 +167,8 @@ def backup_client(settings: Settings) -> OpenAICompatClient | None:
             settings.llm_fallback_api_key.get_secret_value(),
             settings.llm_fallback_model,
             timeout=settings.groq_timeout_seconds,
+            # Gemini 2.5 thinks before answering (3s); without it a reply takes about 1s.
+            extra={"reasoning_effort": "none"} if "gemini-2.5" in settings.llm_fallback_model else None,
         )
     return None
 

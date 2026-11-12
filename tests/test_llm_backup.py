@@ -91,3 +91,33 @@ def test_team_password_ignores_spaces_and_case():
     assert password_ok("  Hayat-Team-2026 ", "hayat-team-2026")
     assert not password_ok("hayat-team-2027", "hayat-team-2026")
     assert not password_ok("anything", "")
+
+
+def test_provider_options_are_sent_and_dropped_if_the_provider_rejects_them():
+    seen = []
+
+    def handler(request):
+        body = request.read().decode()
+        seen.append("reasoning_effort" in body)
+        return httpx.Response(400) if "reasoning_effort" in body else _ok("fine")
+
+    client = OpenAICompatClient(
+        "https://backup.example/v1", "k", "gemini-2.5-flash",
+        transport=httpx.MockTransport(handler), extra={"reasoning_effort": "none"},
+    )
+    text, _ = asyncio.run(client.chat([], max_tokens=20))
+    assert text == "fine" and seen == [True, False]
+
+
+def test_a_rate_limited_backup_is_skipped_instead_of_hammered():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(429)
+
+    client = _client(handler)
+    for _ in range(3):
+        with pytest.raises(CompatError):
+            asyncio.run(client.chat([], max_tokens=5))
+    assert len(calls) == 1  # the two later attempts never left the machine

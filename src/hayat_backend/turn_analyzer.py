@@ -131,7 +131,7 @@ class TurnAnalyzer:
         pending_field: str | None,
         known: dict[str, Any],
     ) -> TurnAnalysis | None:
-        from groq import RateLimitError
+        from groq import AuthenticationError, RateLimitError
 
         payload = {
             "assistant_last_message": last_assistant[:400],
@@ -162,6 +162,9 @@ class TurnAnalyzer:
             except RateLimitError:
                 self._cooldown_until[model] = time.monotonic() + 60
                 logger.warning("turn analysis: %s is rate limited, trying the next model", model)
+            except AuthenticationError:
+                self._cooldown_until[model] = time.monotonic() + 300
+                logger.warning("turn analysis: %s rejected the API key, skipping it", model)
             except Exception as exc:  # try the next model; the rule-based path is the last resort
                 logger.warning("turn analysis failed on %s: %s", model, type(exc).__name__)
         return await self._analyze_with_backup(payload)
