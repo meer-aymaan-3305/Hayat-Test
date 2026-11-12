@@ -15,7 +15,7 @@ from .schemas.programme import (
 SIGNATURE_PROGRAMMES_INTRO_EN: str = (
     "We have three signature wellness experiences, each designed around a different aspect of wellbeing.\n\n"
     "HAYAT-100 focuses on longevity and healthy ageing.\n\n"
-    "AAfiya is a women's fitness and wellness experience.\n\n"
+    "Zoé is a women's fitness and wellness experience.\n\n"
     "FFounders is an executive fitness and wellness retreat for founders, entrepreneurs and business leaders.\n\n"
     "Each programme is designed as a seven-day experience, including five days of retreat activities and two travel days.\n\n"
     "May I ask which of these interests you most?"
@@ -24,7 +24,7 @@ SIGNATURE_PROGRAMMES_INTRO_EN: str = (
 SIGNATURE_PROGRAMMES_INTRO_AR: str = (
     "لدينا ثلاث تجارب عافية متميزة، كل منها مصمم حول جانب مختلف من جوانب العافية وجودة الحياة.\n\n"
     "يركز برنامج HAYAT-100 على طول العمر والشيخوخة الصحية.\n\n"
-    "وAAfiya هي تجربة للياقة والعافية مخصصة للسيدات.\n\n"
+    "وZoé هي تجربة للياقة والعافية مخصصة للسيدات.\n\n"
     "أما FFounders فهو منتجع للياقة والعافية التنفيذية مخصص لمؤسسي الشركات ورواد الأعمال والقادة.\n\n"
     "تم تصميم كل برنامج كتجربة مدتها سبعة أيام، تشمل خمسة أيام من أنشطة المنتجع ويومين للسفر.\n\n"
     "هل لي أن أسأل أي من هذه البرامج يثير اهتمامك أكثر؟"
@@ -166,7 +166,7 @@ PROGRAMMES_CATALOG: dict[ProgrammeId, ProgrammeDetail] = {
     ),
     ProgrammeId.AAFIYA: ProgrammeDetail(
         programme_id=ProgrammeId.AAFIYA,
-        name="AAfiya",
+        name="Zoé",
         candidate_destinations=["United Arab Emirates", "India", "Japan", "Singapore", "Other / Undecided"],
         tagline="Women's Fitness & Wellness Retreat",
         focus="A women-focused fitness and wellness retreat centring on movement, nutrition, self-care, and personal connection.",
@@ -211,20 +211,16 @@ PROGRAMMES_CATALOG: dict[ProgrammeId, ProgrammeDetail] = {
         },
         faqs=[
             ProgrammeFAQ(
-                question="What does AAfiya mean?",
-                answer="AAfiya (عافية) is an Arabic word associated with wellbeing, holistic health, and vitality.",
-            ),
-            ProgrammeFAQ(
-                question="Is AAfiya exclusively for women?",
-                answer="Yes. AAfiya is designed specifically as a women-focused retreat experience.",
+                question="Is Zoé exclusively for women?",
+                answer="Yes. Zoé is designed specifically as a women-focused retreat experience.",
             ),
             ProgrammeFAQ(
                 question="Do I need to be physically fit to participate?",
                 answer="No particular fitness level is required to express interest. The programme is designed to accommodate different levels of experience, from complete beginners to active individuals.",
             ),
             ProgrammeFAQ(
-                question="Is AAfiya only about intense fitness?",
-                answer="No. Movement is just one part. AAfiya equally focuses on nutrition, relaxation, self-care, personal reflection and connecting with like-minded women.",
+                question="Is Zoé only about intense fitness?",
+                answer="No. Movement is just one part. Zoé equally focuses on nutrition, relaxation, self-care, personal reflection and connecting with like-minded women.",
             ),
         ],
     ),

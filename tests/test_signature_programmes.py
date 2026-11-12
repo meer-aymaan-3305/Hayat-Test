@@ -642,7 +642,7 @@ def test_aafiya_only_offers_its_approved_destinations(client):
 
 def test_arabic_keeps_programme_names_in_english_letters():
     assert "HAYAT-100" in SIGNATURE_PROGRAMMES_INTRO_AR
-    assert "AAfiya" in SIGNATURE_PROGRAMMES_INTRO_AR
+    assert "Zoé" in SIGNATURE_PROGRAMMES_INTRO_AR
     assert "FFounders" in SIGNATURE_PROGRAMMES_INTRO_AR
 
 

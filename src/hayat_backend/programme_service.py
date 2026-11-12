@@ -116,7 +116,7 @@ ARABIC_LABELS = {
     "India": "الهند",
     "Undecided / Open": "لم أقرر بعد",
     "HAYAT-100 (Longevity)": "HAYAT-100 (طول العمر)",
-    "AAfiya (Women's Wellness)": "AAfiya (عافية السيدات)",
+    "Zoé (Women's Wellness)": "Zoé (عافية السيدات)",
     "FFounders (Executive Wellness)": "FFounders (عافية التنفيذيين)",
     "Change destination": "تغيير الوجهة",
     "Change timing": "تغيير الموعد",
@@ -481,7 +481,7 @@ class ProgrammeConversationService:
             reply = ALL_THREE_INTEREST_AR if language == "ar" else ALL_THREE_INTEREST_EN
             suggestions = [
                 ChatAction(action_id="p_h100", type="message", label="HAYAT-100", payload="I would prioritise HAYAT-100", relevance="priority programme"),
-                ChatAction(action_id="p_aafiya", type="message", label="AAfiya", payload="I would prioritise AAfiya", relevance="priority programme"),
+                ChatAction(action_id="p_aafiya", type="message", label="Zoé", payload="I would prioritise Zoé", relevance="priority programme"),
                 ChatAction(action_id="p_ffounders", type="message", label="FFounders", payload="I would prioritise FFounders", relevance="priority programme"),
             ]
             return self._build_result(enquiry, reply, suggestions, language)
@@ -493,7 +493,7 @@ class ProgrammeConversationService:
             reply = SIGNATURE_PROGRAMMES_INTRO_AR if language == "ar" else SIGNATURE_PROGRAMMES_INTRO_EN
             suggestions = [
                 ChatAction(action_id="sel_h100", type="message", label="HAYAT-100 (Longevity)", payload="I want healthy ageing and longevity.", relevance="programme selection"),
-                ChatAction(action_id="sel_aafiya", type="message", label="AAfiya (Women's Wellness)", payload="Tell me about AAfiya women's retreat.", relevance="programme selection"),
+                ChatAction(action_id="sel_aafiya", type="message", label="Zoé (Women's Wellness)", payload="Tell me about Zoé women's retreat.", relevance="programme selection"),
                 ChatAction(action_id="sel_ffounders", type="message", label="FFounders (Executive Wellness)", payload="Tell me about FFounders executive retreat.", relevance="programme selection"),
                 ChatAction(action_id="sel_all", type="message", label="I'm interested in all three", payload="I am interested in all three programmes.", relevance="multi-programme"),
             ]
@@ -900,7 +900,7 @@ class ProgrammeConversationService:
         if not enquiry.primary_programme:
             return [
                 ChatAction(action_id="sel_h100", type="message", label="HAYAT-100 (Longevity)", payload="I want healthy ageing and longevity.", relevance="programme selection"),
-                ChatAction(action_id="sel_aafiya", type="message", label="AAfiya (Women's Wellness)", payload="Tell me about AAfiya women's retreat.", relevance="programme selection"),
+                ChatAction(action_id="sel_aafiya", type="message", label="Zoé (Women's Wellness)", payload="Tell me about Zoé women's retreat.", relevance="programme selection"),
                 ChatAction(action_id="sel_ffounders", type="message", label="FFounders (Executive Wellness)", payload="Tell me about FFounders executive retreat.", relevance="programme selection"),
             ]
         if not enquiry.destination_preference:
