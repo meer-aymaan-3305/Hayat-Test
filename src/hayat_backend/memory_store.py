@@ -6,6 +6,8 @@ boundary; this store makes the API runnable without external credentials.
 
 from __future__ import annotations
 
+from .training_scripts import house_style
+
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 import hashlib
@@ -153,6 +155,8 @@ class MemoryStore:
     def append_message(
         self, conversation: Conversation, role: str, content: str, language: str
     ) -> Message:
+        if role == "assistant":
+            content = house_style(content)
         message = Message(
             id=uuid4(),
             conversation_id=conversation.id,

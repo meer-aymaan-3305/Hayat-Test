@@ -22,7 +22,7 @@ from .guardrails import (
 from .language import detect_language
 from .config import get_settings
 from .reference import enquiry_reference
-from .training_scripts import lower_brand, script_reply
+from .training_scripts import house_style, lower_brand, script_reply
 from .turn_analyzer import TurnAnalysis, TurnAnalyzer
 from .llm import ChatModel, LLMError, OfflineChatModel
 from .memory_store import Conversation, MemoryStore
@@ -612,7 +612,7 @@ _PROGRAMMES_OVERVIEW_RE = re.compile(
 
 _PROGRAMMES_OVERVIEW_EN = (
     "TrawellCare's signature wellness programmes are three retreats: "
-    "HAYAT-100 (longevity & healthy ageing), AAfiya (women's fitness & "
+    "HAYAT-100 (longevity & healthy ageing), Zoé (women's fitness & "
     "wellness), and FFounders (executive fitness & wellness for founders "
     "and leaders). We also coordinate non-clinical wellness stays more "
     "broadly. Which of these sounds closest to what you're looking for — "
@@ -620,7 +620,7 @@ _PROGRAMMES_OVERVIEW_EN = (
 )
 _PROGRAMMES_OVERVIEW_AR = (
     "برامج العافية المتميزة من ترافيل كير هي ثلاث رحلات: HAYAT-100 "
-    "(طول العمر والشيخوخة الصحية)، وAAfiya (لياقة وعافية السيدات)، "
+    "(طول العمر والشيخوخة الصحية)، وZoé (لياقة وعافية السيدات)، "
     "وFFounders (لياقة وعافية التنفيذيين ورواد الأعمال). كما ننسّق إقامات "
     "عافية غير سريرية بشكل أوسع. أيّها يبدو أقرب لما تبحث عنه — أم تودّ "
     "مساعدة في الاختيار؟"
@@ -683,7 +683,7 @@ _SKIP_VALUES = {
     "current_country": "Not provided",
     "callback_time": "Flexible",
     "email": "Not provided",
-    "condition_context_for_advisor": "Prefers to discuss with the Medical Advisor",
+    "condition_context_for_advisor": "Prefers to discuss with the case manager",
     "preferred_timing": "Flexible",
     "destination_preference": "Flexible (open to suggestions)",
 }
@@ -734,7 +734,7 @@ _SLOT_SKIP_VALUE = {
     "budget_range": "Flexible / not decided",
     "travellers_count": "Not specified",
     "accommodation_preference": "No preference",
-    "condition_context_for_advisor": "Prefers to discuss with the Medical Advisor",
+    "condition_context_for_advisor": "Prefers to discuss with the case manager",
     "medical_reports_available": "No",
     "current_country": "Not provided",
     "callback_time": "Flexible",
@@ -953,6 +953,10 @@ def _merge_analysis(
 
 
 _HANDOFF_RULES = (
+    "\nNAMES AND ROLES: the signature women's wellness programme is called Zoé (it used to be "
+    "called AAfiya: never use that name). Medical queries are handled by a case manager and "
+    "wellness programmes and wellness queries by a wellness curator. Always write trawellcare "
+    "in lower case.\n"
     "\nMODE: signup handoff. These rules come from the trawellcare training document and "
     "override anything above. You are Hayat, trawellcare's AI assistant; never claim or imply "
     "you are human. Never ask for or record diagnoses, symptoms, medications, test results, "
@@ -971,7 +975,7 @@ _HANDOFF_RULES = (
     "document, you may answer questions about it using only its text, naming the document, "
     "and you never interpret medical results: you may read a value out as the document "
     "states it, but you never say whether it is high, low, normal, above or below a range, "
-    "or concerning; say a medical advisor can explain it in the free consultation."
+    "or concerning; say a case manager can explain it in the free consultation."
 )
 
 
@@ -984,7 +988,7 @@ _INTENT_GUIDANCE = {
     "asks_interpretation": (
         "they asked you to read a report or explain a symptom: say kindly you cannot "
         "interpret reports or symptoms and would not want to guess about something so "
-        "important, a medical advisor can go through it in the free consultation, and "
+        "important, a case manager can go through it in the free consultation, and "
         "documents can be shared securely once their free account is set up"
     ),
     "contact_request": (
@@ -1052,7 +1056,7 @@ def _turn_instruction(
         return (
             "\nConversation policy: they agreed to the signup step. Warmly give them the way "
             "to create their free trawellcare account or log in, which also lets them book "
-            "the free " + ("consultation with a Medical Advisor" if category == "medical_treatment"
+            "the free " + ("consultation with a case manager" if category == "medical_treatment"
                            else "call with a wellness curator") + "." + signup
             + ref_note + " Do not take any contact details here and ask no question."
         )
@@ -1064,7 +1068,7 @@ def _turn_instruction(
         )
     if kind == "signup_handoff":
         who = (
-            "a free consultation with one of our medical advisors, who can talk through their "
+            "a free consultation with one of our case managers, who can talk through their "
             "options" if category == "medical_treatment"
             else "a free call with our wellness curator, who can shape this with them"
             if category == "wellness"
@@ -1227,6 +1231,8 @@ class ChatService:
             key = "S12"
         elif intent == "asks_if_human":
             key = "S16"
+        elif intent == "what_is_trawellcare":
+            key = "DEF"
         elif intent == "how_it_works":
             key = "S17"
         elif kind == "collect_detail" and plan.target_field == "preferred_name":
@@ -2218,7 +2224,7 @@ class ChatService:
             if not _GREETING_START_RE.match(reply):
                 reply = _opening(language) + reply
 
-        reply = lower_brand(reply)
+        reply = house_style(reply)
         if not (decision.blocked or decision.escalation_required):
             # Approved policy scripts (emergency, refusals) stay word for word.
             reply = humanize_reply(reply)
@@ -2257,8 +2263,8 @@ class ChatService:
         if self.handoff and reply_chips:
             custom_suggestions = [
                 ChatAction(
-                    action_id=f"next_{index}", type="message", label=lower_brand(chip),
-                    payload=lower_brand(chip),
+                    action_id=f"next_{index}", type="message", label=house_style(chip),
+                    payload=house_style(chip),
                     relevance="follows from the reply",
                 )
                 for index, chip in enumerate(reply_chips, start=1)

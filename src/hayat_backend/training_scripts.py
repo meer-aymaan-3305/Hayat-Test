@@ -29,6 +29,17 @@ class Script:
 
 
 SCRIPTS: dict[str, Script] = {
+    "DEF": Script(
+        "DEF",
+        "trawellcare helps you explore and arrange healthcare and wellness experiences around the "
+        "world, with everything in one place, from treatments and wellness programmes to flights, "
+        "hotels, transport and payments. 😊 What are you hoping to find?",
+        variants=(
+            "In short, trawellcare brings healthcare and wellness experiences, travel and payments "
+            "together in one place. What are you hoping to find?",
+        ),
+        chips=("Medical treatment", "Wellness programmes"),
+    ),
     "S2": Script(
         "S2",
         "It's lovely to meet you. What would you like me to call you? A first name is perfect, "
@@ -38,11 +49,11 @@ SCRIPTS: dict[str, Script] = {
     "S3": Script(
         "S3",
         "Thank you for trusting me with that, it really matters. The specifics of your health are "
-        "best looked at privately by one of our medical advisors, so I'll keep them out of your "
+        "best looked at privately by one of our case managers, so I'll keep them out of your "
         "enquiry summary.",
         variants=(
-            "Thank you for telling me, and I'll keep that private for our medical advisors.",
-            "Of course. That stays out of your enquiry summary, and a medical advisor can look at "
+            "Thank you for telling me, and I'll keep that private for our case managers.",
+            "Of course. That stays out of your enquiry summary, and a case manager can look at "
             "it with you.",
         ),
         then_ask=True,
@@ -50,12 +61,12 @@ SCRIPTS: dict[str, Script] = {
     "S4": Script(
         "S4",
         "I'm not able to interpret reports or symptoms, and I wouldn't want to guess about "
-        "something this important. A medical advisor can go through it with you in your free "
+        "something this important. A case manager can go through it with you in your free "
         "consultation, and you can share documents securely once your free account is set up.",
         variants=(
-            "That one is best left to a medical advisor in your free consultation, so I wouldn't "
+            "That one is best left to a case manager in your free consultation, so I wouldn't "
             "want to guess.",
-            "A medical advisor can explain that properly in your free consultation.",
+            "A case manager can explain that properly in your free consultation.",
         ),
         then_ask=True,
     ),
@@ -67,7 +78,7 @@ SCRIPTS: dict[str, Script] = {
     ),
     "S6": Script(
         "S6",
-        "The best next step is a free consultation with one of our medical advisors, who can talk "
+        "The best next step is a free consultation with one of our case managers, who can talk "
         "through your options with you. To arrange it, you'll create a free trawellcare account, "
         "which also keeps your details and any documents safe. Shall I take you to the signup and "
         "login page now? 😊",
@@ -207,3 +218,24 @@ def lower_brand(text: Any) -> Any:
     if not isinstance(text, str):
         return text
     return re.sub(r"(?i)\btrawell\s?care\b", "trawellcare", text)
+
+
+_ADVISOR_RE = re.compile(r"\b(medical advisor)(s?)\b", re.IGNORECASE)
+_ZOE_RE = re.compile(r"\bAAfiyah?\b", re.IGNORECASE)
+
+
+def house_style(text: Any) -> Any:
+    """How trawellcare is always written, whatever produced the text:
+
+    trawellcare in lower case, the women's programme named Zoé (it used to be AAfiya), and
+    medical queries handled by a case manager (wellness queries by a wellness curator)."""
+    if not isinstance(text, str):
+        return text
+    text = lower_brand(text)
+    text = _ZOE_RE.sub("Zoé", text)
+
+    def advisor(match: re.Match) -> str:
+        word = "Case manager" if match.group(1)[0].isupper() else "case manager"
+        return word + match.group(2)
+
+    return _ADVISOR_RE.sub(advisor, text)

@@ -27,6 +27,7 @@ INTENTS = {
     "declines", "off_topic", "new_request",
     "accepts", "contact_request", "wants_stop", "under_18", "asks_if_human",
     "clinical_detail", "asks_interpretation", "how_it_works", "contact_channel",
+    "what_is_trawellcare",
 }
 CATEGORIES = {"medical_treatment", "wellness"}
 ALLOWED_FACTS = (
@@ -77,11 +78,13 @@ _SYSTEM = (
     "clinical_detail = volunteers a diagnosis, symptoms, medication, test results or medical "
     "history (do not copy any of it into facts);\n"
     "asks_interpretation = asks the assistant to read a report or explain what a symptom means;\n"
-    "how_it_works = asks in general how trawellcare works, what services it offers, how to book, "
-    "or what happens after registering (not a narrow question about one detail);\n"
+    "what_is_trawellcare = asks what trawellcare is, what it does, who it is, or what services "
+    "it offers overall;\n"
+    "how_it_works = asks how the process works, how to book, or what happens after registering "
+    "(not a narrow question about one detail);\n"
     "contact_channel = asks to be contacted on WhatsApp or by phone.\n"
     "preferred_name: only when the visitor says what to call them, a first name only. "
-    "preferred_programme: the signature programme (HAYAT 100, AAfiya, FFounders) they name "
+    "preferred_programme: the signature programme (HAYAT 100, Zoé, FFounders; Zoé was formerly called AAfiya) they name "
     "or lean toward. trip_duration: approximate length of the trip. wellness_goal: a short "
     "category such as relaxation, fitness, longevity, executive performance or social. "
     "preferred_provider: a hospital or doctor they say they already have. budget_range is a "

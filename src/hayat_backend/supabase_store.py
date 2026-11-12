@@ -20,6 +20,7 @@ from postgrest.exceptions import APIError
 from supabase import Client, create_client
 
 from .config import Settings
+from .training_scripts import house_style
 from .memory_store import Conversation, Lead, Message, Session, Consultation, MemoryStore
 from .schemas.consultation import ConsultationDetails, ConsultationStatus
 from .schemas.coordinator import CoordinatorHandoff, HandoffStatus
@@ -297,6 +298,8 @@ class SupabaseStore:
 
     def append_message(self, conversation: Conversation, role: str, content: str,
                        language: str) -> Message:
+        if role == "assistant":
+            content = house_style(content)
         # The conversation was loaded this request, so its last sequence number is
         # already known; only fall back to a lookup if the insert collides.
         sequence = max((m.sequence for m in conversation.messages), default=0) + 1

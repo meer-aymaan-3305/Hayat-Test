@@ -21,6 +21,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .config import SettingsError, get_settings
 from .chat_service import ChatService, greeting
+from .training_scripts import house_style
 from .llm import create_chat_model
 from .memory_store import MemoryStore
 from .supabase_store import SupabaseStore, create_store
@@ -466,7 +467,7 @@ def create_app(
             "consultation_progress": result["consultation_progress"],
             "profile_summary": result["persona_profile"],
             "escalated": result["next_action"] == "escalate",
-            "answer": result["answer"],
+            "answer": house_style(result["answer"]),
             "follow_up_question": result["follow_up_question"],
             "follow_up_target": result["follow_up_target"],
             "profile_updates": result["profile_updates"],

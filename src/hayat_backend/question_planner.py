@@ -7,6 +7,12 @@ import re
 from typing import Any
 
 
+_ANSWER_FIRST_INTENTS = {
+    "question", "mixed", "emotional", "smalltalk", "off_topic", "new_request",
+    "clinical_detail", "asks_interpretation", "asks_if_human", "contact_request",
+    "contact_channel", "what_is_trawellcare", "how_it_works",
+}
+
 # Steps whose reply is fully specified by the turn instruction: never answer-first.
 _NO_ANSWER_FIRST = {
     "escalate", "post_submission", "stop_intake", "opt_out", "human_request",
@@ -211,10 +217,7 @@ class QuestionPlanner:
         if (
             self.extended
             and step.decision_type not in _NO_ANSWER_FIRST
-            and intent in {
-                "question", "mixed", "emotional", "smalltalk", "off_topic", "new_request",
-                "clinical_detail", "asks_interpretation", "asks_if_human", "contact_request",
-            }
+            and intent in _ANSWER_FIRST_INTENTS
             and step.decision_type not in {"escalate"}
         ):
             return replace(step, answer_first=True)
@@ -431,6 +434,8 @@ class QuestionPlanner:
             return PlannedStep("human_request", "The visitor wants a person now (S10).")
 
         category = self._category(conversation)
+        # A question, worry or request is answered first; the offer waits for a plain turn.
+        answering_turn = intent in (_ANSWER_FIRST_INTENTS - {"smalltalk"})
         offered_at = facts.get("handoff_offer_turn")
         offer_just_made = bool(offered_at) and str(offered_at) == str(assistant_count)
         if offer_just_made and intent == "accepts":
@@ -457,7 +462,7 @@ class QuestionPlanner:
                 target_field="preferred_name",
             )
 
-        if user_turns >= 5 and not offered_at:
+        if user_turns >= 5 and not offered_at and not answering_turn:
             # By the fifth visitor message the free consultation is offered regardless.
             return PlannedStep(
                 "signup_handoff", "Fifth visitor message: offer the free consultation.",
@@ -482,7 +487,7 @@ class QuestionPlanner:
         known = [f for f, _ in funnel if self._known(conversation, f)]
         missing = next(((f, label) for f, label in funnel if not self._known(conversation, f)), None)
         enough = len(known) >= 3 or user_turns >= 5
-        if enough and not offered_at:
+        if enough and not offered_at and not answering_turn:
             return PlannedStep(
                 "signup_handoff", "Enough is known: offer the free consultation (S6 or S7).",
                 question_goal="signup handoff", target_field="handoff",
@@ -494,7 +499,7 @@ class QuestionPlanner:
                 question_goal=label, question_text=self._question_for(field, category),
                 target_field=field,
             )
-        if not offered_at:
+        if not offered_at and not answering_turn:
             return PlannedStep(
                 "signup_handoff", "Everything is shared: offer the free consultation.",
                 question_goal="signup handoff", target_field="handoff",
@@ -662,7 +667,7 @@ class QuestionPlanner:
             "current_country": "Which country are you based in at the moment?",
             "preferred_provider": "Do you already have a hospital or doctor in mind? No worries if not.",
             "trip_duration": "Roughly how long would you like to be away for?",
-            "preferred_programme": "Does one of our signature programmes feel like a fit so far, HAYAT 100, AAfiya or FFounders, or would you like me to tell you a little about them?",
+            "preferred_programme": "Does one of our signature programmes feel like a fit so far, HAYAT 100, Zoé or FFounders, or would you like me to tell you a little about them?",
             "wellness_goal": "That sounds wonderful, and a break like this can really make a difference. Is there a particular feeling you'd love to come home with, like more energy, calm or a fresh start?",
             "email": "Would you like to share an email address too? You can skip this if you prefer.",
             "callback_time": "When would be a good time for our coordinator to reach you?",

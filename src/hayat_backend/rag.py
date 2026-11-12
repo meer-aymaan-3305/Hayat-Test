@@ -10,12 +10,20 @@ from collections import Counter
 from dataclasses import dataclass
 import math
 import re
+import unicodedata
 
 _MIN_RELEVANCE = 1.0
 
 
+def _fold(text: str) -> str:
+    """Lower case without accents, so "Zoé", "zoe" and the old name AAfiya all match."""
+    text = unicodedata.normalize("NFD", text.lower())
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return text.replace("aafiyah", "zoe").replace("aafiya", "zoe")
+
+
 def _tokenize(text: str) -> list[str]:
-    return [w.lower() for w in re.findall(r"[\w'-]+", text) if len(w) > 1]
+    return [w for w in re.findall(r"[\w'-]+", _fold(text)) if len(w) > 1]
 
 
 def _stem(word: str) -> str:
@@ -157,7 +165,7 @@ DEFAULT_APPROVED_KNOWLEDGE: list[KnowledgeChunk] = [
     KnowledgeChunk(
         text=(
             "Trawellcare Signature Wellness Programmes Overview: Trawellcare is developing three distinctive "
-            "premium wellness retreat programmes: HAYAT-100 (longevity & healthy ageing), AAfiya (women's fitness "
+            "premium wellness retreat programmes: HAYAT-100 (longevity & healthy ageing), Zoé (women's fitness "
             "& wellness), and FFounders (executive fitness & wellness for founders and leaders). "
             "Each signature programme is designed as a seven-day experience comprising five retreat days and two travel days. "
             "All three programmes are individually curated with no fixed or standard package price. "
@@ -192,15 +200,15 @@ DEFAULT_APPROVED_KNOWLEDGE: list[KnowledgeChunk] = [
     ),
     KnowledgeChunk(
         text=(
-            "AAfiya Women's Fitness & Wellness Retreat: A women-focused retreat designed to step away from daily routines "
+            "Zoé Women's Fitness & Wellness Retreat: A women-focused retreat designed to step away from daily routines "
             "and reconnect through movement, nutrition, self-care, and relaxation. Philosophy: Your journey. Your wellbeing. Your way. "
-            "AAfiya is exclusively for women and welcomes all fitness levels from beginners to active individuals without any fitness prerequisites. "
+            "Zoé is exclusively for women and welcomes all fitness levels from beginners to active individuals without any fitness prerequisites. "
             "Proposed activities include pilates, yoga, guided strength and conditioning, women's health workshops, mindful eating, "
             "restorative spa experiences, and curated group connection."
         ),
         source=SourceReference(
             document_id="hayat-aafiya-women-v1",
-            title="AAfiya Women's Retreat Guide",
+            title="Zoé Women's Retreat Guide",
             version="1.0",
         ),
         approved=True,
@@ -222,7 +230,7 @@ DEFAULT_APPROVED_KNOWLEDGE: list[KnowledgeChunk] = [
     ),
     KnowledgeChunk(
         text=(
-            "Signature Programmes Pricing & Customisation: All three signature programmes (HAYAT-100, AAfiya, FFounders) "
+            "Signature Programmes Pricing & Customisation: All three signature programmes (HAYAT-100, Zoé, FFounders) "
             "are individually curated, and there is no fixed package price or generic package rate. "
             "Pricing depends on the selected destination country, retreat facility, accommodation tier, activities, services, "
             "and customisation requirements. A tailored proposal is prepared after understanding the visitor's preferences and expectations."
@@ -251,7 +259,7 @@ DEFAULT_APPROVED_KNOWLEDGE: list[KnowledgeChunk] = [
     KnowledgeChunk(
         text=(
             "برامج العافية المتميزة - نظرة عامة: تطور ترافيل كير ثلاثة برامج عافية متميزة: "
-            "HAYAT-100 (طول العمر والشيخوخة الصحية)، وAAfiya (لياقة وعافية السيدات)، وFFounders (لياقة وعافية القادة ورواد الأعمال). "
+            "HAYAT-100 (طول العمر والشيخوخة الصحية)، وZoé (لياقة وعافية السيدات)، وFFounders (لياقة وعافية القادة ورواد الأعمال). "
             "مدة كل برنامج سبعة أيام (خمسة أيام منتجع ويومان للسفر). يتم تصميم البرامج بشكل مخصص وفردي دون سعر ثابت للباقة. "
             "الوجهات قيد الاستكشاف تشمل أمريكا وإسبانيا واليابان وسنغافورة والهند والإمارات. التسجيل مجاني ولا يترتب عليه أي التزام مالي."
         ),
@@ -311,10 +319,10 @@ class InMemoryRetriever:
         avg_len = (sum(sum(tc.values()) for tc in chunk_terms) / n_docs) or 1.0
 
         scored: list[tuple[float, KnowledgeChunk]] = []
-        lower_query = query.lower()
+        lower_query = _fold(query)
 
         for chunk, counts in zip(active, chunk_terms):
-            chunk_lower = chunk.text.lower()
+            chunk_lower = _fold(chunk.text)
             score = 0.0
 
             # BM25 over whole (lightly stemmed) words. Replaces raw substring
@@ -343,8 +351,8 @@ class InMemoryRetriever:
             if "hayat-100" in lower_query or "hayat 100" in lower_query or "longevity" in lower_query or "ageing" in lower_query or "aging" in lower_query:
                 if "hayat-100" in chunk_lower or "longevity" in chunk_lower:
                     score += 5.0
-            if "aafiya" in lower_query or "عافية" in lower_query or "women" in lower_query or "pilates" in lower_query:
-                if "aafiya" in chunk_lower or "عافية" in chunk_lower or "women" in chunk_lower:
+            if "zoe" in lower_query or "عافية" in lower_query or "women" in lower_query or "pilates" in lower_query:
+                if "zoe" in chunk_lower or "عافية" in chunk_lower or "women" in chunk_lower:
                     score += 5.0
             if "ffounders" in lower_query or "founder" in lower_query or "executive" in lower_query or "فاوندرز" in lower_query:
                 if "ffounders" in chunk_lower or "executive" in chunk_lower:

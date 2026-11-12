@@ -395,3 +395,61 @@ def test_the_chat_response_carries_what_the_page_needs():
             "/v1/chat", headers=headers, json={"conversation_id": conv["id"], "message": "hello"}
         ).json()
         assert {"message_id", "suggestions", "reference", "ai_status"} <= set(body)
+
+
+# ---- the definition, names and roles --------------------------------------------------------------
+def test_what_is_trawellcare_gets_the_definition_word_for_word():
+    service, _, conversation = _service({"what is trawellcare?": TurnAnalysis(intent="what_is_trawellcare")})
+    result = _say(service, conversation, "what is trawellcare?")
+    assert result["reply"] == (
+        "trawellcare helps you explore and arrange healthcare and wellness experiences around the "
+        "world, with everything in one place, from treatments and wellness programmes to flights, "
+        "hotels, transport and payments. 😊 What are you hoping to find?"
+    )
+    assert [a.label for a in result["suggestions"]] == ["Medical treatment", "Wellness programmes"]
+    again = _say(service, conversation, "what is trawellcare?")
+    assert again["reply"] != result["reply"]  # a short variant, not the same paragraph again
+
+
+def test_house_style_names_the_programme_zoe_and_uses_the_right_roles():
+    from hayat_backend.training_scripts import house_style
+
+    text = house_style("TrawellCare's AAfiya, or AAfiyah, is reviewed by a Medical Advisor. Our medical advisors help.")
+    assert text == "trawellcare's Zoé, or Zoé, is reviewed by a Case manager. Our case managers help."
+    assert "medical advis" not in " ".join(s.text.lower() for s in SCRIPTS.values())
+
+
+def test_everything_hayat_says_is_stored_in_house_style():
+    store = MemoryStore()
+    session, _ = store.create_guest_session("en")
+    conversation = store.create_conversation(session.id)
+    said = store.append_message(
+        conversation, "assistant", "Welcome to Trawellcare. Try AAfiya with a Medical Advisor.", "en"
+    )
+    assert said.content == "Welcome to trawellcare. Try Zoé with a Case manager."
+    heard = store.append_message(conversation, "user", "I love Trawellcare and AAfiya", "en")
+    assert heard.content == "I love Trawellcare and AAfiya"  # the visitor's own words are untouched
+
+
+def test_the_model_is_told_the_names_and_roles():
+    service, model, conversation = _service({"hello": TurnAnalysis(intent="question")})
+    _say(service, conversation, "hello")
+    system = model.calls[-1][0]["content"]
+    assert "called Zoé" in system and "never use that name" in system
+    assert "case manager" in system and "wellness curator" in system
+
+
+def test_a_question_is_answered_first_and_the_offer_waits_for_a_plain_turn():
+    chat = {f"message {i}": TurnAnalysis(intent="smalltalk") for i in range(1, 5)}
+    chat["tell me about Zoe"] = TurnAnalysis(intent="question")
+    chat["thanks"] = TurnAnalysis(intent="smalltalk")
+    service, model, conversation = _service(chat)
+    for i in range(1, 5):
+        _say(service, conversation, f"message {i}")
+    # The fifth visitor message is a question: it is answered, not met with a scripted offer.
+    fifth = _say(service, conversation, "tell me about Zoe")
+    assert fifth["next_action"] != "signup_handoff"
+    assert fifth["reply"] not in {SCRIPTS["S6"].text, SCRIPTS["S7"].text}
+    assert "handoff_offered" not in conversation.case_facts
+    sixth = _say(service, conversation, "thanks")
+    assert conversation.case_facts.get("handoff_offered") == "yes" or sixth["next_action"] == "signup_handoff"

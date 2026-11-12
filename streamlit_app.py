@@ -19,6 +19,7 @@ import requests
 import streamlit as st
 
 from hayat_backend.config import get_settings
+from hayat_backend.training_scripts import house_style
 
 st.set_page_config(page_title="Hayat", page_icon="🌿", layout="centered", initial_sidebar_state="collapsed")
 st.markdown(
@@ -73,7 +74,7 @@ base_url = os.getenv("HAYAT_API_URL", "http://127.0.0.1:2005")
 
 PROGRAMMES = [
     ("HAYAT-100", "Longevity and healthy ageing", "Tell me about HAYAT-100"),
-    ("AAfiya", "Women's fitness and wellness", "Tell me about AAfiya"),
+    ("Zoé", "Women's fitness and wellness", "Tell me about Zoé"),
     ("FFounders", "Executive fitness and wellness", "Tell me about FFounders"),
 ]
 
@@ -192,7 +193,7 @@ messages = st.session_state.messages
 for index, message in enumerate(messages):
     avatar = "🌿" if message["role"] == "assistant" else None
     with st.chat_message(message["role"], avatar=avatar):
-        st.write(message["content"])
+        st.write(house_style(message["content"]))
         if message["role"] == "assistant" and message.get("id") and not st.session_state.get("awaiting_reply"):
             if st.button("🔊 Listen", key=f"listen_{index}"):
                 st.session_state.pending_audio = _speak(message["id"])

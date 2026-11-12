@@ -40,7 +40,7 @@ restart) and no real SMS is sent.
 ## Page features
 - **One composer, like a modern assistant:** type, attach a document with the paperclip, or
   record your voice with the microphone, all in the same box.
-- **Welcome cards** for the three signature programmes (HAYAT-100, AAfiya, FFounders). Tapping
+- **Welcome cards** for the three signature programmes (HAYAT-100, Zoé, FFounders). Tapping
   one asks Hayat about it. After the first message they stay available under "Signature
   programmes".
 - **Suggested next steps** as pills under each reply, written from what was just said.

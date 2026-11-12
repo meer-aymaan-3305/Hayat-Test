@@ -74,7 +74,7 @@ def test_arabic_generic_wellness_not_aafiya(client):
     conv, h = _conv(client, "ar")
     r = _chat(client, conv, h, "أبحث عن برنامج عافية عام.")
     reply = r["reply"]
-    assert "AAfiya" not in reply and "السيدات" not in reply.split("؟")[0]
+    assert "Zoé" not in reply and "السيدات" not in reply.split("؟")[0]
 
 
 def test_arabic_hayat100_maps_longevity(client):
@@ -86,7 +86,7 @@ def test_arabic_hayat100_maps_longevity(client):
 def test_arabic_aafiya_maps_womens(client):
     conv, h = _conv(client, "ar")
     r = _chat(client, conv, h, "برنامج عافية السيدات AAfiya")
-    assert "AAfiya" in r["reply"] and "سيدات" in r["reply"]
+    assert "Zoé" in r["reply"] and "سيدات" in r["reply"]
 
 
 def test_arabic_ffounders_maps_executive(client):
@@ -99,7 +99,7 @@ def test_arabic_ambiguous_wellness_clarifies(client):
     conv, h = _conv(client, "ar")
     r = _chat(client, conv, h, "أريد شيئاً متعلقاً بالصحة لكنني لست متأكداً مما أريد.")
     # Must not silently assign a programme; should clarify or ask a goal question
-    assert "AAfiya" not in r["reply"] or "HAYAT-100" in r["reply"] or "FFounders" in r["reply"] or "؟" in r["reply"]
+    assert "Zoé" not in r["reply"] or "HAYAT-100" in r["reply"] or "FFounders" in r["reply"] or "؟" in r["reply"]
 
 
 # ---------- D3: source attribution honesty ----------

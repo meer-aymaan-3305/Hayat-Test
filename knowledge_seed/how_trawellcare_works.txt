@@ -1,3 +1,7 @@
+What trawellcare is: trawellcare helps you explore and arrange healthcare and wellness experiences around the world, with everything in one place, from treatments and wellness programmes to flights, hotels, transport and payments.
+
+Who helps: medical queries are handled by a case manager, and wellness programmes and wellness queries by a wellness curator.
+
 How trawellcare works: the customer journey in five stages.
 
 Stage 1, discover and understand. It starts with understanding what the visitor is looking for, whether that is a medical treatment, a restful retreat, a longevity programme or a fitness experience. Hayat, trawellcare's AI health and wellness concierge, has a friendly conversation to understand their needs, preferences and budget.
@@ -12,10 +16,10 @@ Stage 5, aftercare. Trawellcare stays in touch with aftercare, follow ups and on
 
 Roles. Hayat is the conversational assistant that understands needs, explains trawellcare and guides visitors to the free consultation. Dawood is the intelligent care matching system that shortlists options, which trawellcare's team review.
 
-Medical travel versus wellness travel. Medical travel focuses on cross border care with approved hospitals and doctors, human review and travel coordination, and starts with a free consultation with one of trawellcare's medical advisors. Wellness travel focuses on curated retreats and programmes such as HAYAT 100 for longevity and healthy ageing, AAfiya for women's wellness, and FFounders for executive fitness and wellness, and starts with a free call with a wellness curator who shapes the programme with the visitor.
+Medical travel versus wellness travel. Medical travel focuses on cross border care with approved hospitals and doctors, human review and travel coordination, and starts with a free consultation with one of trawellcare's case managers. Wellness travel focuses on curated retreats and programmes such as HAYAT 100 for longevity and healthy ageing, Zoé for women's wellness, and FFounders for executive fitness and wellness, and starts with a free call with a wellness curator who shapes the programme with the visitor.
 
 Free account and free consultation. To book the free consultation or call, the visitor creates a free trawellcare account or logs in. The account keeps their details and documents safe and lets them choose how trawellcare contacts them: WhatsApp, email or phone. Trawellcare only reaches out in the ways the visitor says yes to. Contact details, scheduling and communication preferences are all handled after login, never in the chat. Documents are shared securely in the upload area after signup.
 
 Nothing is confirmed until it is verified. A particular hospital, treatment, provider, flight, visa or booking is never promised or confirmed by Hayat. The team verifies and confirms. Registering interest is free and is not a booking or payment commitment.
 
-What happens after a visitor signs up. They create their free account, choose how they would like to be contacted, and book the free consultation or call. A medical advisor or wellness curator then talks through their options with them.
+What happens after a visitor signs up. They create their free account, choose how they would like to be contacted, and book the free consultation or call. A case manager or wellness curator then talks through their options with them.

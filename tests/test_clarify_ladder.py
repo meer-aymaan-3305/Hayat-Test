@@ -137,7 +137,7 @@ def test_programmes_overview_question_gets_catalogue_answer(client):
     conv, h = _conv(client)
     _chat(client, conv, h, "I am interested in a wellness programme.")
     r = _chat(client, conv, h, "What are such programmes?")
-    assert "HAYAT-100" in r["reply"] and "AAfiya" in r["reply"] and "FFounders" in r["reply"]
+    assert "HAYAT-100" in r["reply"] and "Zoé" in r["reply"] and "FFounders" in r["reply"]
 
 
 def test_programmes_overview_does_not_hijack_interest_statement(client):

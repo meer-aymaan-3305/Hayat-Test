@@ -89,7 +89,7 @@ def test_signature_programmes_retrieval():
 
         # AAfiya
         aafiya_chunks = await retriever.retrieve("What is AAfiya women's wellness retreat?")
-        assert any("AAfiya" in c.text for c in aafiya_chunks)
+        assert any("Zoé" in c.text for c in aafiya_chunks)
         assert any("women" in c.text.lower() for c in aafiya_chunks)
 
         # FFounders
@@ -144,7 +144,7 @@ def test_approved_introductory_pitch_verbatim(client):
 
     assert "We have three signature wellness experiences" in res["reply"]
     assert "HAYAT-100 focuses on longevity and healthy ageing." in res["reply"]
-    assert "AAfiya is a women's fitness and wellness experience." in res["reply"]
+    assert "Zoé is a women's fitness and wellness experience." in res["reply"]
     assert "FFounders is an executive fitness and wellness retreat" in res["reply"]
     assert "Each programme is designed as a seven-day experience" in res["reply"]
     assert "May I ask which of these interests you most?" in res["reply"]
@@ -656,3 +656,18 @@ def test_pressing_a_suggestion_moves_on_instead_of_repeating_the_introduction(cl
         client.post("/v1/chat", headers=fresh_headers, json={"conversation_id": fresh["id"], "message": opening})
         reply = client.post("/v1/chat", headers=fresh_headers, json={"conversation_id": fresh["id"], "message": action["payload"]}).json()
         assert reply["suggested_actions"] != intro["suggested_actions"], action["label"]
+
+
+def test_the_old_name_still_finds_the_renamed_programme():
+    """AAfiya is now Zoé; visitors who still say AAfiya, or type Zoe, find the same programme."""
+    import asyncio
+
+    from hayat_backend.rag import InMemoryRetriever
+
+    async def run():
+        retriever = InMemoryRetriever()
+        for query in ["tell me about AAfiya", "what is Zoé?", "what is zoe"]:
+            chunks = await retriever.retrieve(query)
+            assert any("Zoé" in c.text for c in chunks), query
+
+    asyncio.run(run())
