@@ -57,7 +57,7 @@ EF_SCRIPTS_EN = {
     ),
     "EF-2": (
         "Thank you for sharing that — for anything clinical like this, a specialist will need "
-        "to review it directly, so I'll keep them out of your enquiry summary. Let's keep going with {step}."
+        "to review it directly, so I won't record the details here. Let's keep going with {step}."
     ),
     "EF-3": (
         "I don't choose or recommend specific hospitals, doctors, or treatments myself — "
@@ -88,7 +88,7 @@ EF_SCRIPTS_EN = {
     ),
     "EF-9": (
         "This sounds like it may need urgent attention right now, which I'm not able to help "
-        "with directly. Please contact local emergency services immediately — 9999 in Oman, "
+        "with directly. Please contact local emergency services immediately — 999 in Oman, "
         "998 in the UAE, or your local emergency number — or go to the nearest emergency room. "
         "Once you're safe, we're here to help with planning."
     ),
@@ -111,7 +111,7 @@ EF_SCRIPTS_AR = {
     ),
     "EF-2": (
         "شكراً لمشاركتك ذلك — بالنسبة لأي تفاصيل سريرية مثل هذه، سيحتاج أخصائي إلى مراجعتها "
-        "مباشرة، لذلك سأبقيها خارج ملخص طلبك. دعنا نواصل بخصوص {step}."
+        "مباشرة، لذلك لن أسجل هذه التفاصيل هنا. دعنا نواصل بخصوص {step}."
     ),
     "EF-3": (
         "أنا لا أختار ولا أوصي بمستشفيات أو أطباء أو علاجات محددة بنفسي — بمجرد تسجيلك، "
@@ -140,7 +140,7 @@ EF_SCRIPTS_AR = {
     ),
     "EF-9": (
         "يبدو أن هذا قد يتطلب عناية عاجلة وفورية، وهو ما لا يمكنني المساعدة به مباشرة. "
-        "يرجى الاتصال بخدمات الطوارئ المحلية فوراً — 9999 في سلطنة عمان، 998 في الإمارات، "
+        "يرجى الاتصال بخدمات الطوارئ المحلية فوراً — 999 في سلطنة عمان، 998 في الإمارات، "
         "أو رقم الطوارئ المحلي لديك — أو التوجه إلى أقرب قسم طوارئ. بمجرد أن تكون في أمان، "
         "نحن هنا لمساعدتك في التخطيط."
     ),

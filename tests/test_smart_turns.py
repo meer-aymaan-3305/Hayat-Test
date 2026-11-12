@@ -33,7 +33,7 @@ class StubAnalyzer:
     def __init__(self, script: dict[str, TurnAnalysis]) -> None:
         self.script = script
 
-    async def analyze(self, *, text, last_assistant, pending_field, known, state=None):
+    async def analyze(self, *, text, last_assistant, pending_field, known):
         return self.script.get(text)
 
 

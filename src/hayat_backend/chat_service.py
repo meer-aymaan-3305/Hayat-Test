@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-import json
 from dataclasses import replace
 import logging
 import re
@@ -24,7 +23,6 @@ from .language import detect_language
 from .config import get_settings
 from .reference import enquiry_reference
 from .training_scripts import house_style, lower_brand, script_reply
-from .flow import apply_analysis, state_snapshot, stuck_slot_writes
 from .turn_analyzer import TurnAnalysis, TurnAnalyzer
 from .llm import ChatModel, LLMError, OfflineChatModel
 from .memory_store import Conversation, MemoryStore
@@ -761,8 +759,7 @@ _SLOT_SKIP_VALUE = {
 # filled for flow purposes and must never be asked again.
 _SLOT_SKIP_MARKERS = {
     "declined", "undecided", "not specified", "no preference", "none",
-    "not provided", "flexible", "no", "unsure", "heard",
-    "flexible / not decided",
+    "not provided", "flexible", "no", "flexible / not decided",
     "flexible (open to suggestions)", "undecided / open",
     "undecided / open to exploring",
     "prefers to discuss with the case manager",
@@ -1205,8 +1202,6 @@ class ChatService:
             except Exception:
                 self.analyzer = None
         self.handoff = bool(_cfg.signup_handoff and _cfg.extended_intake)
-        if self.analyzer is not None:
-            self.analyzer.slots_mode = self.handoff
         self.signup_url = _cfg.signup_url
         self.support_contact = _cfg.support_contact
         self.question_planner = QuestionPlanner(
@@ -1505,9 +1500,6 @@ class ChatService:
                     k: v for k, v in conversation.case_facts.items()
                     if not isinstance(v, dict) and v not in (None, "") and k in _ANALYZER_CONTEXT_FIELDS
                 },
-                state=(
-                    state_snapshot(conversation) if self.handoff else None
-                ),
             ))
 
         # Append user message and log transcript
@@ -1529,21 +1521,6 @@ class ChatService:
             content=redact_message(text),
             language=language,
         )
-
-        # Slot store first: lane-aware values, statuses and lane/focus state must
-        # be persisted before planning, so the planner sees this turn's slots
-        # (addendum parts 2 and 4).
-        if self.handoff and analysis is not None:
-            turn_no = sum(1 for m in conversation.messages if m.role == "user")
-            slot_writes = apply_analysis(conversation, analysis, turn_no)
-            if slot_writes:
-                self.store.save_fact_updates(conversation, [
-                    FactValue(
-                        field_name=key, value=str(value), status=FactStatus.CONFIRMED,
-                        source_message_id=user_message.id, confidence=1.0,
-                    )
-                    for key, value in slot_writes
-                ])
 
         # Check if message pertains to Signature Wellness Programmes (Separate Service Category)
         if not self.question_planner.extended and self.programme_service.is_programme_intent(text, conversation):
@@ -1956,7 +1933,6 @@ class ChatService:
             text=text, conversation=conversation, decision=decision, progress=progress,
             visitor=visitor, intent=analysis.intent if analysis else None,
             submitted=bool(conversation.consultation_id),
-            analysis=analysis,
         )
         if self.handoff:
             assistants_after = sum(1 for m in conversation.messages if m.role == "assistant") + 1
@@ -1978,21 +1954,6 @@ class ChatService:
             elif plan.decision_type == "opt_out":
                 mark("opt_out_requested", "yes")
                 logger.warning("opt_out_requested conversation=%s", conversation.id)
-            if analysis is not None:
-                # Persist which slot this turn is asking about, so a question
-                # asked three times with no answer is treated as UNSURE.
-                if plan.slot_id:
-                    state_facts.append(FactValue(
-                        field_name="pending_slot", value=plan.slot_id,
-                        status=FactStatus.CONFIRMED,
-                        source_message_id=user_message.id, confidence=1.0,
-                    ))
-                turn_no = sum(1 for m in conversation.messages if m.role == "user")
-                for key, value in stuck_slot_writes(conversation, turn_no, {}):
-                    state_facts.append(FactValue(
-                        field_name=key, value=str(value), status=FactStatus.CONFIRMED,
-                        source_message_id=user_message.id, confidence=1.0,
-                    ))
             if state_facts:
                 self.store.save_fact_updates(conversation, state_facts)
         if submission is not None:
@@ -2055,7 +2016,7 @@ class ChatService:
             }
             known_facts = {
                 k: v for k, v in conversation.case_facts.items()
-                if not isinstance(v, dict) and v not in (None, "") and k != "slot_meta"
+                if not isinstance(v, dict) and v not in (None, "")
             }
             known_str = ", ".join(f"{k}: {v}" for k, v in known_facts.items())
             ledger = _slot_ledger(conversation)
@@ -2072,24 +2033,15 @@ class ChatService:
                 + " | ".join(q[:120] for q in asked_questions[-8:])
                 if asked_questions else ""
             )
-            if self.handoff:
-                # Addendum 7.1: the model gets the structured slot snapshot, not
-                # a re-read of the transcript.
-                slot_note = (
-                    "\nSTATE (the slot store is the truth about the visitor; never ask "
-                    "for anything CONFIRMED, UNSURE or DECLINED): "
-                    + json.dumps(state_snapshot(conversation, plan), ensure_ascii=False)
+            slot_note = (
+                "\nSLOT STATUS — already answered, never ask again: "
+                + ", ".join(
+                    f"{f}={'skipped by visitor' if s == 'skipped' else 'given'}"
+                    for f, s in ledger.items()
                 )
-            else:
-                slot_note = (
-                    "\nSLOT STATUS — already answered, never ask again: "
-                    + ", ".join(
-                        f"{f}={'skipped by visitor' if s == 'skipped' else 'given'}"
-                        for f, s in ledger.items()
-                    )
-                    + ". A skipped slot counts as answered: accept it and move on."
-                    if ledger else ""
-                )
+                + ". A skipped slot counts as answered: accept it and move on."
+                if ledger else ""
+            )
             recent_replies = [
                 m.content for m in conversation.messages[:-1] if m.role == "assistant"
             ][-3:]

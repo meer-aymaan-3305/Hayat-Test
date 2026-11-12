@@ -30,9 +30,6 @@ class PlannedStep:
     resume_goal: str | None = None
     clarify_attempts: int = 0
     answer_first: bool = False
-    slot_id: str | None = None
-    lane: str | None = None
-    switch_lane: bool = False
 
 
 _CONSULTATION_INTENT = re.compile(
@@ -199,7 +196,6 @@ class QuestionPlanner:
         visitor: str | None = None,
         intent: str | None = None,
         submitted: bool = False,
-        analysis: Any = None,
     ) -> PlannedStep:
         """Pick the next step. When the visitor asked or shared something rather than
         simply answering, the step is flagged answer_first so the reply deals with that
@@ -212,9 +208,7 @@ class QuestionPlanner:
                 "The enquiry was submitted; help with changes, questions or new requests.",
             )
         if self.handoff:
-            from .flow import plan_handoff
-
-            step = plan_handoff(self, conversation, decision, intent, analysis)
+            step = self._plan_handoff(conversation, decision, intent)
         else:
             step = self._plan_core(
                 text=text, conversation=conversation, decision=decision,
@@ -226,10 +220,7 @@ class QuestionPlanner:
             and intent in _ANSWER_FIRST_INTENTS
             and step.decision_type not in {"escalate"}
         ):
-            return replace(
-                step, answer_first=True,
-                question_text=None if intent == "emotional" else step.question_text,
-            )
+            return replace(step, answer_first=True)
         return step
 
     def _plan_core(

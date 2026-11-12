@@ -344,11 +344,11 @@ async def test_hb10_never_continue_routine_intake_in_emergency():
     res1 = await chat.respond(conv, "I have severe crushing chest pain radiating to my arm and can't breathe!")
     assert res1["escalation_required"] is True
     assert getattr(conv, "emergency_locked", False) is True
-    assert "9999 in Oman, 998 in the UAE" in res1["reply"]
+    assert "999 in Oman, 998 in the UAE" in res1["reply"]
 
     # Intake is permanently locked for subsequent turns
     res2 = await chat.respond(conv, "Can we talk about dental implants now?")
-    assert "9999 in Oman, 998 in the UAE" in res2["reply"]
+    assert "999 in Oman, 998 in the UAE" in res2["reply"]
     assert res2["escalation_required"] is True
 
 
@@ -390,7 +390,7 @@ async def test_hb10_lock_persistence_through_session_restoration():
     # New message in restored session must re-lock and return EF-9 immediately
     res_restored = await chat.respond(restored_conv, "Tell me about holiday packages.")
     assert getattr(restored_conv, "emergency_locked", False) is True
-    assert "9999 in Oman, 998 in the UAE" in res_restored["reply"]
+    assert "999 in Oman, 998 in the UAE" in res_restored["reply"]
     assert res_restored["escalation_required"] is True
 
 
@@ -642,7 +642,7 @@ def test_ef1_through_ef11_verbatim_scripts_en():
     )
     assert EF_SCRIPTS_EN["EF-2"] == (
         "Thank you for sharing that — for anything clinical like this, a specialist will need "
-        "to review it directly, so I'll keep them out of your enquiry summary. Let's keep going with {step}."
+        "to review it directly, so I won't record the details here. Let's keep going with {step}."
     )
     assert EF_SCRIPTS_EN["EF-3"] == (
         "I don't choose or recommend specific hospitals, doctors, or treatments myself — "
@@ -673,7 +673,7 @@ def test_ef1_through_ef11_verbatim_scripts_en():
     )
     assert EF_SCRIPTS_EN["EF-9"] == (
         "This sounds like it may need urgent attention right now, which I'm not able to help "
-        "with directly. Please contact local emergency services immediately — 9999 in Oman, "
+        "with directly. Please contact local emergency services immediately — 999 in Oman, "
         "998 in the UAE, or your local emergency number — or go to the nearest emergency room. "
         "Once you're safe, we're here to help with planning."
     )
@@ -698,7 +698,7 @@ def test_ef1_through_ef11_verbatim_scripts_ar():
     assert "لن أحتاج إلى ذلك، ويرجى عدم مشاركة كلمات المرور أو أرقام البطاقات" in EF_SCRIPTS_AR["EF-6"]
     assert "ليس لدي معلومات مؤكدة حول ذلك بعد، ولا أود التخمين." in EF_SCRIPTS_AR["EF-7"]
     assert "أواجه صعوبة في حفظ تفاصيلك الآن. لم يُفقد أي شيء من جانبك" in EF_SCRIPTS_AR["EF-8"]
-    assert "9999 في سلطنة عمان، 998 في الإمارات" in EF_SCRIPTS_AR["EF-9"]
+    assert "999 في سلطنة عمان، 998 في الإمارات" in EF_SCRIPTS_AR["EF-9"]
     assert "أنا آسف جداً لأنك تمر بهذا" in EF_SCRIPTS_AR["EF-10"]
     assert "أود أن أحافظ على فائدة هذه المحادثة" in EF_SCRIPTS_AR["EF-11"]
 

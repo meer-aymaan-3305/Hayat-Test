@@ -358,7 +358,7 @@ def test_exact_fallback_responses():
     assert "not able to interpret symptoms" in EF_SCRIPTS_EN["EF-1"].lower()
     assert "specialist will need to review" in EF_SCRIPTS_EN["EF-2"].lower()
     assert "don't choose or recommend" in EF_SCRIPTS_EN["EF-3"].lower()
-    assert "9999 in Oman" in EF_SCRIPTS_EN["EF-9"]
+    assert "999 in Oman" in EF_SCRIPTS_EN["EF-9"]
 
 
 def test_audit_logging_coordinator_lifecycle():
