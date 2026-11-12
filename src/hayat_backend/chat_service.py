@@ -22,6 +22,7 @@ from .guardrails import (
 from .language import detect_language
 from .config import get_settings
 from .reference import enquiry_reference
+from .training_scripts import lower_brand, script_reply
 from .turn_analyzer import TurnAnalysis, TurnAnalyzer
 from .llm import ChatModel, LLMError, OfflineChatModel
 from .memory_store import Conversation, MemoryStore
@@ -395,7 +396,7 @@ def _terminal_clarify_count(conversation: Any) -> int:
         1
         for m in getattr(conversation, "messages", [])
         if m.role == "assistant"
-        and any(marker in m.content for marker in _TERMINAL_CLARIFY_MARKERS)
+        and any(marker.lower() in m.content.lower() for marker in _TERMINAL_CLARIFY_MARKERS)
     )
 
 
@@ -1190,6 +1191,64 @@ class ChatService:
             status=FactStatus.CONFIRMED, source_message_id=message_id, confidence=0.5,
         )]
 
+    def _scenario_reply(
+        self, plan: Any, analysis: TurnAnalysis | None, decision: Any, conversation: Conversation
+    ) -> tuple[str, list[str]] | None:
+        """The document's verbatim reply for this turn, with its follow-up chips, or None."""
+        intent = analysis.intent if analysis else None
+        kind = plan.decision_type
+        category = conversation.case_facts.get("customer_category")
+        history = [m.content for m in conversation.messages if m.role == "assistant"]
+
+        key: str | None = None
+        if decision.reason in ("possible_emergency", "EF-9"):
+            key = "S13"
+        elif decision.reason == "credential_payment_pasted":
+            key = "S15"
+        elif decision.blocked:
+            return None  # other policy scripts (self harm, abuse, injection) stay as approved
+        elif kind == "stop_intake":
+            key = "S14"
+        elif kind == "opt_out":
+            key = "S11"
+        elif kind == "human_request":
+            key = "S10"
+        elif kind == "handoff_declined":
+            key = "S8"
+        elif kind == "signup_handoff":
+            key = {"medical_treatment": "S6", "wellness": "S7"}.get(category or "")
+        elif intent == "clinical_detail":
+            key = "S3"
+        elif intent == "asks_interpretation":
+            key = "S4"
+        elif intent == "contact_request":
+            key = "S9"
+        elif intent == "contact_channel":
+            key = "S12"
+        elif intent == "asks_if_human":
+            key = "S16"
+        elif intent == "how_it_works":
+            key = "S17"
+        elif kind == "collect_detail" and plan.target_field == "preferred_name":
+            key = "S2"
+        elif kind == "collect_detail" and plan.target_field == "wellness_goal":
+            key = "S5"
+        if key is None:
+            return None
+
+        script = script_reply(key, history, self.support_contact)
+        if script is None:
+            return None
+        text, chips = script.text, list(script.chips)
+        if script.then_ask:
+            if kind == "signup_handoff" and category in ("medical_treatment", "wellness"):
+                offer = script_reply("S6" if category == "medical_treatment" else "S7", history)
+                if offer:
+                    text, chips = f"{text} {offer.text}", list(offer.chips)
+            elif plan.question_text and kind not in {"stop_intake", "opt_out", "human_request", "handoff_declined"}:
+                text = f"{text} {plan.question_text}"
+        return text, chips
+
     def _model_is_live(self) -> bool:
         """True when a real provider model (not the offline stub) will answer."""
         return not isinstance(self.model, OfflineChatModel)
@@ -1842,6 +1901,12 @@ class ChatService:
         reply_used_knowledge = False
         reply: str | None = None
 
+        # The training document's scenarios (S2 to S17) are answered word for word.
+        if self.handoff and clarification_reply is None and language == "en" and submission is None:
+            scripted = self._scenario_reply(plan, analysis, decision, conversation)
+            if scripted is not None:
+                clarification_reply, reply_chips = scripted
+
         if submission is not None:
             reply = (
                 "Your consultation request has been submitted successfully — "
@@ -2153,6 +2218,7 @@ class ChatService:
             if not _GREETING_START_RE.match(reply):
                 reply = _opening(language) + reply
 
+        reply = lower_brand(reply)
         if not (decision.blocked or decision.escalation_required):
             # Approved policy scripts (emergency, refusals) stay word for word.
             reply = humanize_reply(reply)
@@ -2191,7 +2257,8 @@ class ChatService:
         if self.handoff and reply_chips:
             custom_suggestions = [
                 ChatAction(
-                    action_id=f"next_{index}", type="message", label=chip, payload=chip,
+                    action_id=f"next_{index}", type="message", label=lower_brand(chip),
+                    payload=lower_brand(chip),
                     relevance="follows from the reply",
                 )
                 for index, chip in enumerate(reply_chips, start=1)

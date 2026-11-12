@@ -121,7 +121,7 @@ def clarify_attempts(conversation: Any) -> int:
         1
         for m in getattr(conversation, "messages", [])
         if m.role == "assistant"
-        and any(marker in m.content for marker in _CLARIFY_MARKERS)
+        and any(marker.lower() in m.content.lower() for marker in _CLARIFY_MARKERS)
     )
 
 
@@ -153,12 +153,12 @@ class QuestionPlanner:
     )
     HANDOFF_WELLNESS = (
         ("wellness_programme_or_goal", "type of wellness experience"),
+        ("wellness_goal", "wellness goal"),
         ("preferred_programme", "signature programme"),
         ("destination_preference", "destination"),
         ("preferred_timing", "travel window"),
         ("trip_duration", "duration"),
         ("travellers_count", "number of participants"),
-        ("wellness_goal", "wellness goal"),
         ("budget_range", "budget band"),
     )
     # Asked after the number is verified; skippable.
@@ -663,7 +663,7 @@ class QuestionPlanner:
             "preferred_provider": "Do you already have a hospital or doctor in mind? No worries if not.",
             "trip_duration": "Roughly how long would you like to be away for?",
             "preferred_programme": "Does one of our signature programmes feel like a fit so far, HAYAT 100, AAfiya or FFounders, or would you like me to tell you a little about them?",
-            "wellness_goal": "Is there a particular feeling you would love to come home with, like more energy, calm or a fresh start?",
+            "wellness_goal": "That sounds wonderful, and a break like this can really make a difference. Is there a particular feeling you'd love to come home with, like more energy, calm or a fresh start?",
             "email": "Would you like to share an email address too? You can skip this if you prefer.",
             "callback_time": "When would be a good time for our coordinator to reach you?",
         }

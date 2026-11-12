@@ -38,18 +38,20 @@ restart) and no real SMS is sent.
 - The app sleeps after a period of inactivity and restarts fresh (in-memory data is lost).
 
 ## Page features
-- **Signature programmes:** three buttons (HAYAT-100, AAfiya, FFounders). Tapping one asks Hayat
-  about it and she answers from the approved knowledge.
-- **Suggested next steps:** two or three taps under each reply, written by Hayat from what was
-  just said, so they always follow the conversation.
-- **Reference number:** once the free consultation is offered, the visitor gets a short number
-  such as `HYT-261112-48213` (date plus five digits) to quote at signup. It is also on the
-  coordinator card.
-- **Documents:** the 📎 button uploads a PDF, Word, PNG or JPG after the visitor ticks a consent
-  box. Hayat answers questions from the document text, names the document, and never says
-  whether a medical value is normal or concerning. (Scanned files need the `tesseract-ocr`
-  package, listed in `packages.txt`.)
-- **Voice:** 🔊 Listen under each reply, a 🔊 Voice replies switch, and 🎤 Speak.
+- **One composer, like a modern assistant:** type, attach a document with the paperclip, or
+  record your voice with the microphone, all in the same box.
+- **Welcome cards** for the three signature programmes (HAYAT-100, AAfiya, FFounders). Tapping
+  one asks Hayat about it. After the first message they stay available under "Signature
+  programmes".
+- **Suggested next steps** as pills under each reply, written from what was just said.
+- **Documents:** attach a PDF, Word, PNG or JPG; the visitor must tap "Allow and upload" first.
+  Hayat answers from the document text, names it, and never says whether a medical value is
+  normal or concerning. (Scanned files need `tesseract-ocr`, listed in `packages.txt`.)
+- **Voice:** a Listen button under each reply and a "Read aloud" switch at the top.
+- **Reference number:** after the free consultation is offered, a short number such as
+  `HYT-261112-48213` is shown to quote at signup. It is also on the coordinator card.
+- **Wording:** the scenario replies S1 to S17 are the training document's own words, and
+  "trawellcare" is always written in lower case.
 
 ## Voice
 - Tap the microphone above the message box and speak (English or Arabic); Hayat transcribes

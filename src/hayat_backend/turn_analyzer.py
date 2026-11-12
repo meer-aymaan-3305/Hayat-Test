@@ -26,7 +26,7 @@ INTENTS = {
     "answering", "question", "mixed", "wants_human", "emotional", "smalltalk",
     "declines", "off_topic", "new_request",
     "accepts", "contact_request", "wants_stop", "under_18", "asks_if_human",
-    "clinical_detail", "asks_interpretation",
+    "clinical_detail", "asks_interpretation", "how_it_works", "contact_channel",
 }
 CATEGORIES = {"medical_treatment", "wellness"}
 ALLOWED_FACTS = (
@@ -76,7 +76,10 @@ _SYSTEM = (
     "asks_if_human = asks whether the assistant is a person or a bot;\n"
     "clinical_detail = volunteers a diagnosis, symptoms, medication, test results or medical "
     "history (do not copy any of it into facts);\n"
-    "asks_interpretation = asks the assistant to read a report or explain what a symptom means.\n"
+    "asks_interpretation = asks the assistant to read a report or explain what a symptom means;\n"
+    "how_it_works = asks in general how trawellcare works, what services it offers, how to book, "
+    "or what happens after registering (not a narrow question about one detail);\n"
+    "contact_channel = asks to be contacted on WhatsApp or by phone.\n"
     "preferred_name: only when the visitor says what to call them, a first name only. "
     "preferred_programme: the signature programme (HAYAT 100, AAfiya, FFounders) they name "
     "or lean toward. trip_duration: approximate length of the trip. wellness_goal: a short "
