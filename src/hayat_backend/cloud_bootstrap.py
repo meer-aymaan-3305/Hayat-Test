@@ -35,7 +35,8 @@ TEST_DEFAULTS = {
     "SIGNUP_HANDOFF": "true",
     "DEV_FAKE_OTP": "true",
     "MEDICAL_AI_REPLIES": "true",
-    "VISITOR_ATTACHMENTS_ENABLED": "false",
+    # Visitors can upload their own documents; Hayat answers from them within the guardrails.
+    "VISITOR_ATTACHMENTS_ENABLED": "true",
 }
 
 

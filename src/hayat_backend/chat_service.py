@@ -21,6 +21,7 @@ from .guardrails import (
 )
 from .language import detect_language
 from .config import get_settings
+from .reference import enquiry_reference
 from .turn_analyzer import TurnAnalysis, TurnAnalyzer
 from .llm import ChatModel, LLMError, OfflineChatModel
 from .memory_store import Conversation, MemoryStore
@@ -849,6 +850,38 @@ def _handoff_filter(facts: list[FactValue]) -> list[FactValue]:
     return kept
 
 
+_CHIPS_RE = re.compile(r"\[\[\s*chips\s*:(.*?)(?:\]\]|$)", re.IGNORECASE | re.DOTALL)
+_CHIPS_INSTRUCTION = (
+    "\nSUGGESTED NEXT STEPS: after your reply, on a new final line, write exactly "
+    "[[chips: first | second | third]]. Each chip is something the visitor might want to say "
+    "or ask next, in their own voice, under 7 words, specific to what you just said or asked "
+    "(for example answers to your question, or the natural follow up to your explanation). "
+    "Never generic ones like \"Tell me more\", and never about contact details, medical "
+    "history or diagnoses. Each chip is ONE clear option, never two answers mixed together, and never invents "
+    "personal details such as a name. Use two or three. Leave the line out if nothing natural fits."
+)
+
+
+def _split_chips(text: str) -> tuple[str, list[str]]:
+    """Separate the model's suggested next steps from its reply."""
+    match = _CHIPS_RE.search(text)
+    if not match:
+        return text, []
+    reply = (text[: match.start()] + text[match.end():]).strip()
+    chips: list[str] = []
+    for raw in match.group(1).split("|"):
+        chip = raw.strip().strip("\"'").strip()
+        if (
+            2 <= len(chip) <= 60
+            and "http" not in chip.lower()
+            and "@" not in chip
+            and redact_message(chip) == chip
+            and chip.lower() not in {c.lower() for c in chips}
+        ):
+            chips.append(chip)
+    return reply, chips[:3]
+
+
 _ANALYZER_CONTEXT_FIELDS = {
     "customer_category", "procedure_or_service", "wellness_programme_or_goal",
     "destination_preference", "preferred_timing", "budget_range", "travellers_count",
@@ -933,7 +966,11 @@ _HANDOFF_RULES = (
     "Never promise a call or a callback: the free consultation or call is booked after they "
     "create an account or log in. Never write a web address, link or URL unless one is given "
     "to you in these instructions. Do not offer or mention the signup step on your own: only "
-    "when the conversation policy tells you to."
+    "when the conversation policy tells you to. If the visitor has uploaded their own "
+    "document, you may answer questions about it using only its text, naming the document, "
+    "and you never interpret medical results: you may read a value out as the document "
+    "states it, but you never say whether it is high, low, normal, above or below a range, "
+    "or concerning; say a medical advisor can explain it in the free consultation."
 )
 
 
@@ -967,10 +1004,16 @@ _INTENT_GUIDANCE = {
 def _turn_instruction(
     plan: Any, analysis: TurnAnalysis | None, *, category: str | None = None,
     signup_url: str | None = None, support: str | None = None, handoff: bool = False,
+    reference: str | None = None,
 ) -> str:
     """What this particular turn should do, written for the reply model."""
     intent = analysis.intent if analysis else None
     question = plan.question_text
+    ref_note = (
+        f" Their enquiry reference is {reference}: tell them to quote it when they sign up so "
+        "the team can find their chat, if they agree."
+        if reference else ""
+    )
     guidance = _INTENT_GUIDANCE.get(intent or "", "")
     first = f"\nFirst, deal with this: {guidance}." if guidance else ""
     signup = (
@@ -1010,7 +1053,7 @@ def _turn_instruction(
             "to create their free trawellcare account or log in, which also lets them book "
             "the free " + ("consultation with a Medical Advisor" if category == "medical_treatment"
                            else "call with a wellness curator") + "." + signup
-            + " Do not take any contact details here and ask no question."
+            + ref_note + " Do not take any contact details here and ask no question."
         )
     if kind == "handoff_declined":
         return (
@@ -1487,6 +1530,7 @@ class ChatService:
         # Disambiguation & semantic mapping of short contextual answers relative to previous questions
         clarification_reply: str | None = None
         custom_suggestions: list[ChatAction] | None = [] if self.handoff else None
+        reply_chips: list[str] = []
 
         if _SHORT_ANSWER_RE.search(text) and len(prior_questions) >= 2:
             last_lower = last_assistant_content.lower()
@@ -1728,6 +1772,9 @@ class ChatService:
             clarification_reply is None
             and not decision.blocked
             and document_context
+            # In guided mode the live model answers from the document text itself (citing
+            # it and never interpreting results); the verbatim quoting is the offline fallback.
+            and not (self.handoff and use_ai and self._model_is_live())
             and (
                 _doc_related_turn(conversation, document_context, text)
                 # A query whose terms match extracted document lines is
@@ -1799,10 +1846,10 @@ class ChatService:
             reply = (
                 "Your consultation request has been submitted successfully — "
                 "a coordinator will contact you shortly to confirm the next "
-                f"steps. Reference: {submission.id}."
+                f"steps. Reference: {enquiry_reference(conversation)}."
                 if language == "en" else
                 f"تم إرسال طلب الاستشارة بنجاح — سيتواصل معك المنسق قريباً لتأكيد "
-                f"الخطوات التالية. الرقم المرجعي: {submission.id}."
+                f"الخطوات التالية. الرقم المرجعي: {enquiry_reference(conversation)}."
             )
         elif clarification_reply is not None:
             reply = clarification_reply
@@ -1907,9 +1954,9 @@ class ChatService:
                     plan, analysis,
                     category=conversation.case_facts.get("customer_category"),
                     signup_url=self.signup_url, support=self.support_contact,
-                    handoff=self.handoff,
+                    handoff=self.handoff, reference=enquiry_reference(conversation),
                 )
-                + (_HANDOFF_RULES if self.handoff else "")
+                + (_HANDOFF_RULES + _CHIPS_INSTRUCTION if self.handoff else "")
                 + (
                     "\n7. Never promise a phone call, a callback time or that someone will "
                     "contact the visitor unless they have already shared and verified their "
@@ -1950,6 +1997,8 @@ class ChatService:
                 self._start_shadow(conversation.id, model_messages, language)
             try:
                 generated = None if not use_ai else await self.model.complete(model_messages)
+                if generated and self.handoff:
+                    generated, reply_chips = _split_chips(generated)
                 reply = (
                     validate_output(
                         generated, language,
@@ -2139,6 +2188,14 @@ class ChatService:
                 if len(sources) >= 3:
                     break
 
+        if self.handoff and reply_chips:
+            custom_suggestions = [
+                ChatAction(
+                    action_id=f"next_{index}", type="message", label=chip, payload=chip,
+                    relevance="follows from the reply",
+                )
+                for index, chip in enumerate(reply_chips, start=1)
+            ]
         # Independent lookups: run side by side instead of one network trip each.
         handoff, programme_enquiry = await asyncio.gather(
             asyncio.to_thread(self.store.get_handoff_for_conversation, conversation.id),
@@ -2177,6 +2234,10 @@ class ChatService:
             "programme_enquiry": programme_enquiry,
             "service_category": "international_medical_travel",
             "ai_status": "unavailable" if model_outage else "ok",
+            "reference": (
+                enquiry_reference(conversation)
+                if conversation.case_facts.get("handoff_offered") else None
+            ),
         }
         result["suggested_actions"] = result["suggestions"]
         self.store.cache_chat(conversation.id, client_message_id, result)

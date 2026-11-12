@@ -480,6 +480,8 @@ def create_app(
                 else result.get("programme_enquiry")
             ),
             "service_category": result.get("service_category", "international_medical_travel"),
+            "reference": result.get("reference"),
+            "ai_status": result.get("ai_status", "ok"),
         }
 
     @app.get("/v1/conversations/{conversation_id}/messages", tags=["conversations"])

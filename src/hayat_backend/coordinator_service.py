@@ -109,7 +109,10 @@ class CoordinatorHandoffService:
             "wellness" if "wellness" in category_text
             else "medical" if category_text else "general"
         )
+        from .reference import enquiry_reference
+
         card: dict[str, Any] = {
+            "reference": enquiry_reference(conversation),
             "lead_category": lead_category,
             "service_or_goal": pick("procedure_or_service", "wellness_programme_or_goal"),
             "preferred_destination": pick("destination_preference", "preferred_destination"),

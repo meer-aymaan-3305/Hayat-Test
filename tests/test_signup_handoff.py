@@ -271,3 +271,69 @@ def test_a_fixed_step_still_deals_with_a_clinical_message_first():
     _say(service, conversation, "I also have asthma")
     system = model.calls[-1][0]["content"]
     assert "keep them out of the enquiry summary" in system
+
+
+def test_suggested_next_steps_are_taken_from_the_reply_and_never_shown_as_text():
+    from hayat_backend.chat_service import _split_chips
+
+    reply, chips = _split_chips(
+        "Happy to explain.\n[[chips: Tell me about AAfiya | How long is a retreat? | "
+        "How long is a retreat? | email me at a@b.com | call +971 50 123 4567]]"
+    )
+    assert reply == "Happy to explain."
+    assert chips == ["Tell me about AAfiya", "How long is a retreat?"]  # no duplicates or contact
+    reply, chips = _split_chips("Sure thing. [[chips: One | Two")  # cut off by the token limit
+    assert reply == "Sure thing." and chips == ["One", "Two"]
+    assert _split_chips("No chips here.") == ("No chips here.", [])
+
+
+def test_chips_reach_the_page_as_related_suggestions():
+    class ChipModel(StubModel):
+        async def complete(self, messages):
+            self.calls.append(messages)
+            return "AAfiya is our women's wellness programme. [[chips: How long is it? | Is it only for women?]]"
+
+    service, _, conversation = _service({"what is AAfiya?": TurnAnalysis(intent="question")})
+    service.model = ChipModel()
+    result = _say(service, conversation, "what is AAfiya?")
+    assert "[[" not in result["reply"] and "chips" not in result["reply"]
+    assert [a.label for a in result["suggestions"]] == ["How long is it?", "Is it only for women?"]
+    assert "SUGGESTED NEXT STEPS" in service.model.calls[-1][0]["content"]
+
+
+def test_the_reference_is_a_short_readable_number_that_stays_the_same():
+    import re
+
+    from hayat_backend.reference import enquiry_reference
+
+    service, _, conversation = _service({})
+    first = enquiry_reference(conversation)
+    assert re.fullmatch(r"HYT-\d{6}-\d{5}", first)
+    assert enquiry_reference(conversation) == first
+    other = _service({})[2]
+    assert enquiry_reference(other) != first
+
+
+def test_the_reference_is_given_once_the_signup_step_is_offered():
+    service, model, conversation = _offered({"yes please": TurnAnalysis(intent="accepts")})
+    result = _say(service, conversation, "yes please")
+    assert result["reference"].startswith("HYT-")
+    assert result["reference"] in model.calls[-1][0]["content"]
+
+
+def test_the_chat_response_carries_what_the_page_needs():
+    from fastapi.testclient import TestClient
+
+    from hayat_backend.main import create_app
+
+    with TestClient(create_app(store=MemoryStore())) as client:
+        session = client.post("/v1/sessions/guest", json={"locale": "en"}).json()
+        headers = {"X-Session-ID": session["session_id"], "X-Session-Token": session["session_token"]}
+        conv = client.post(
+            "/v1/conversations", headers={"X-Session-Token": session["session_token"]},
+            json={"guest_session_id": session["session_id"]},
+        ).json()
+        body = client.post(
+            "/v1/chat", headers=headers, json={"conversation_id": conv["id"], "message": "hello"}
+        ).json()
+        assert {"message_id", "suggestions", "reference", "ai_status"} <= set(body)

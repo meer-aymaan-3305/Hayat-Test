@@ -2,9 +2,15 @@
 headless = true
 enableXsrfProtection = true
 enableCORS = true
+maxUploadSize = 10
 
 [browser]
 gatherUsageStats = false
 
 [theme]
+base = "light"
 primaryColor = "#0f766e"
+backgroundColor = "#fbfaf8"
+secondaryBackgroundColor = "#f1efe9"
+textColor = "#1c1917"
+font = "sans serif"
