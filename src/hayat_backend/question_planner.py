@@ -439,14 +439,16 @@ class QuestionPlanner:
         if offer_just_made and intent == "declines":
             return PlannedStep("handoff_declined", "They declined the signup offer (S8).")
 
-        # Optional preferred first name, asked once and only when it feels natural.
+        # Optional preferred first name, asked once — and only in a natural lull
+        # (pure smalltalk). Right after they share a need, acknowledge that need
+        # instead of pivoting to "lovely to meet you".
         name_asked = any(
             m.role == "assistant" and re.search(r"(?:call you|what to call)", m.content, re.I)
             for m in messages
         )
         if (
             not name_asked and not facts.get("preferred_name") and user_turns >= 1
-            and intent not in {"question", "off_topic", "emotional", "clinical_detail"}
+            and intent == "smalltalk"
         ):
             return PlannedStep(
                 "collect_detail", "Ask for an optional preferred first name.",

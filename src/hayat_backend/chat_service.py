@@ -83,10 +83,17 @@ def _opening(language: str) -> str:
     return "مرحباً! " if language == "ar" else "Hello! "
 
 
-def _account_reply(step: str, language: str) -> str:
+def _account_reply(step: str, language: str, signup_url: str | None = None) -> str:
     """What the website's visitors hear instead of being asked for contact details."""
     if step == "sign_in_required":
-        return SIGN_IN_REPLY_AR if language == "ar" else SIGN_IN_REPLY_EN
+        base = SIGN_IN_REPLY_AR if language == "ar" else SIGN_IN_REPLY_EN
+        if signup_url:
+            return base + (
+                f" You can sign in or create your free account here: {signup_url}"
+                if language == "en"
+                else f" يمكنك تسجيل الدخول أو إنشاء حسابك المجاني من هنا: {signup_url}"
+            )
+        return base
     if language == "ar":
         return "تم حفظ طلبك في حسابك، ويمكن لفريقنا الاطلاع على هذه المحادثة."
     return "Your request is saved to your account, and our team can see this conversation."
@@ -748,6 +755,43 @@ _SLOT_SKIP_VALUE = {
     "preferred_provider": "None",
 }
 
+# Values that mean "the visitor answered, but chose not to share" — the slot is
+# filled for flow purposes and must never be asked again.
+_SLOT_SKIP_MARKERS = {
+    "declined", "undecided", "not specified", "no preference", "none",
+    "not provided", "flexible", "no", "flexible / not decided",
+    "flexible (open to suggestions)", "undecided / open",
+    "undecided / open to exploring",
+    "prefers to discuss with the case manager",
+}
+
+
+def _slot_status(value: Any) -> str:
+    """known = real answer; skipped = visitor declined or said flexible/none; unknown = never answered."""
+    if value in (None, ""):
+        return "unknown"
+    v = str(value).strip().lower()
+    return "skipped" if v in _SLOT_SKIP_MARKERS else "known"
+
+
+def _slot_ledger(conversation: Any) -> dict[str, str]:
+    """Per-slot fill status for every intake field the flow may ask about."""
+    facts = getattr(conversation, "case_facts", {}) or {}
+    fields = (
+        _SLOT_FIELDS
+        | {"procedure_or_service", "wellness_programme_or_goal",
+           "customer_category", "name", "phone_number"}
+    )
+    ledger: dict[str, str] = {}
+    for field in sorted(fields):
+        value = facts.get(field)
+        if isinstance(value, dict):
+            value = None
+        status = _slot_status(value)
+        if status != "unknown":
+            ledger[field] = status
+    return ledger
+
 
 def _declarative_part(text: str) -> str:
     """The statements in a message, without its questions.
@@ -998,6 +1042,11 @@ _INTENT_GUIDANCE = {
         "their free account they can add it securely and choose exactly how and where we "
         "reach them"
     ),
+    "declines": (
+        "they are not interested in the suggestion or are unsure: acknowledge that "
+        "gently in a few words, do NOT say goodbye or end the conversation, and keep "
+        "helping — offer the next useful step or ask what they would like instead"
+    ),
     "asks_if_human": (
         "they asked if you are a person: say you are Hayat, trawellcare's AI assistant, and "
         "that the team behind you are real people who will be glad to speak with them in the "
@@ -1244,6 +1293,19 @@ class ChatService:
 
         script = script_reply(key, history, self.support_contact)
         if script is None:
+            return None
+        # A funnel-question script must not answer an informational turn: when
+        # the visitor asked something ("tell me about Zoé") the model replies
+        # with the real answer instead of repeating the scripted question.
+        # Policy scripts (clinical detail, opt-out, handoff…) still fire verbatim.
+        if (
+            plan.decision_type == "collect_detail"
+            and analysis is not None
+            and analysis.intent in {
+                "question", "mixed", "off_topic", "new_request",
+                "what_is_trawellcare", "how_it_works",
+            }
+        ):
             return None
         text, chips = script.text, list(script.chips)
         if script.then_ask:
@@ -1957,6 +2019,29 @@ class ChatService:
                 if not isinstance(v, dict) and v not in (None, "")
             }
             known_str = ", ".join(f"{k}: {v}" for k, v in known_facts.items())
+            ledger = _slot_ledger(conversation)
+            asked_questions = []
+            for m in conversation.messages:
+                if m.role != "assistant":
+                    continue
+                for q in re.findall(r"[^.!?؟\n]+[?؟]", m.content):
+                    q = re.sub(r"\s+", " ", q).strip()
+                    if q and q not in asked_questions:
+                        asked_questions.append(q)
+            questions_note = (
+                "\nQUESTIONS ALREADY ASKED — never ask any of these again, even reworded: "
+                + " | ".join(q[:120] for q in asked_questions[-8:])
+                if asked_questions else ""
+            )
+            slot_note = (
+                "\nSLOT STATUS — already answered, never ask again: "
+                + ", ".join(
+                    f"{f}={'skipped by visitor' if s == 'skipped' else 'given'}"
+                    for f, s in ledger.items()
+                )
+                + ". A skipped slot counts as answered: accept it and move on."
+                if ledger else ""
+            )
             recent_replies = [
                 m.content for m in conversation.messages[:-1] if m.role == "assistant"
             ][-3:]
@@ -2028,6 +2113,8 @@ class ChatService:
                     f"\nALREADY KNOWN DETAILS (do NOT ask for any of these again): {known_str}."
                     if known_str else ""
                 )
+                + slot_note
+                + questions_note
                 + _turn_instruction(
                     plan, analysis,
                     category=conversation.case_facts.get("customer_category"),
@@ -2223,7 +2310,7 @@ class ChatService:
             else:
                 reply = enforce_single_question(reply)
         if plan.decision_type in {"account_request_saved", "sign_in_required"}:
-            cta = _account_reply(plan.decision_type, language)
+            cta = _account_reply(plan.decision_type, language, self.signup_url)
             # Do not repeat the identical sign-in CTA on consecutive turns —
             # keep the substantive reply instead. Guests may always keep
             # asking ordinary questions; the CTA resurfaces only after the
@@ -2234,6 +2321,22 @@ class ChatService:
             )
             if not (plan.decision_type == "sign_in_required" and prev_assistant and cta in prev_assistant.content):
                 reply = cta
+
+        # Whenever the reply is about creating an account or signing in, the
+        # visitor gets the actual link — not just a button the page must render.
+        if (
+            self.signup_url
+            and plan.decision_type in {
+                "signup_handoff", "handoff_link", "handoff_declined",
+                "human_request", "sign_in_required", "account_request_saved",
+            }
+            and self.signup_url not in reply
+        ):
+            reply += (
+                f" You can sign in or create your free account here: {self.signup_url}"
+                if language == "en"
+                else f" يمكنك تسجيل الدخول أو إنشاء حسابك المجاني من هنا: {self.signup_url}"
+            )
 
         # Prepend opening greeting only on the user's first message if not an emergency or crisis
         if prior_user_message_count == 0 and not any(m.role == "assistant" for m in conversation.messages[:-1]) and not decision.escalation_required and decision.reason not in ("possible_emergency", "crisis_self_harm", "EF-9", "EF-10"):

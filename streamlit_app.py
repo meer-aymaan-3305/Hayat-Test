@@ -333,6 +333,7 @@ if entry:
 
 # ---- for the project team only: ?debug=1 -----------------------------------------------------
 if st.query_params.get("debug") == "1" and os.getenv("HAYAT_CLOUD") == "1":
+    st.caption(f"Code version {os.getenv('HAYAT_CODE_VERSION', 'unknown')}")
     with st.expander("AI connection check"):
         if st.button("Check now"):
             from hayat_backend.cloud_bootstrap import check_ai_connection
