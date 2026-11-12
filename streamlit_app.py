@@ -139,6 +139,7 @@ with st.sidebar.expander("Restore Guest Session"):
             st.session_state.session_id = restore_session_id
             st.session_state.token = restore_token
             st.session_state.conversation_id = restore_conversation_id
+            st.session_state.session_locale = st.session_state.locale
             st.session_state.messages = response.json().get("messages", [])
             st.session_state.suggestions = response.json().get("suggested_actions", [])
             st.session_state.profile_summary = response.json().get("persona_profile", {})
@@ -164,7 +165,8 @@ with st.sidebar.expander("Restore Guest Session"):
         else:
             st.error("Could not restore that conversation.")
 
-if st.sidebar.button("Start New Concierge Session", use_container_width=True):
+def _start_session() -> None:
+    """Open a fresh guest session and conversation (called automatically on load)."""
     st.session_state.profile_summary = {}
     st.session_state.consultation_progress = None
     st.session_state.consultation_details = {}
@@ -206,11 +208,18 @@ if st.sidebar.button("Start New Concierge Session", use_container_width=True):
                 "suggested_actions",
                 conversation_data.get("suggestions", []),
             )
+            st.session_state.session_locale = st.session_state.locale
             st.rerun()
         else:
             st.error(f"Could not create conversation: {_validation_detail(conversation)}")
     else:
         st.error(f"Could not start session: {_validation_detail(response)}")
+
+
+# The conversation opens by itself when the page loads, and again if the language is
+# changed (the greeting is in the visitor's language). Reloading the page starts afresh.
+if st.session_state.conversation_id is None or st.session_state.get("session_locale") != st.session_state.locale:
+    _start_session()
 
 
 # =============================================================================
