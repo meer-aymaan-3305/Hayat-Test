@@ -1,0 +1,23 @@
+{
+  "_note": "Programme names live here and in the knowledge documents, never in code. To rename a programme, change it here, list the old name under former_names, and update the documents.",
+  "programmes": [
+    {
+      "id": "hayat-100",
+      "name": "HAYAT-100",
+      "tagline": "Longevity and healthy ageing",
+      "former_names": []
+    },
+    {
+      "id": "zoe",
+      "name": "Zoé",
+      "tagline": "Women's fitness and wellness",
+      "former_names": ["AAfiya", "AAfiyah"]
+    },
+    {
+      "id": "ffounders",
+      "name": "FFounders",
+      "tagline": "Executive fitness and wellness",
+      "former_names": []
+    }
+  ]
+}
