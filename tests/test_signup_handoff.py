@@ -112,10 +112,10 @@ def test_s2_a_preferred_first_name_is_asked_once_and_is_optional():
         {"I'm good, thanks": TurnAnalysis(intent="smalltalk")}, name_asked=False
     )
     first = _say(service, conversation, "I'm good, thanks")
-    assert first["reply"] == SCRIPTS["S2"].text
     assert first["follow_up_target"] == "preferred_name"
-    assert model.calls == []  # a scripted reply needs no model call
+    assert SCRIPTS["S2"].text in model.calls[-1][0]["content"]  # a style example, not a script to copy
     service.analyzer.script["I'd rather not say"] = TurnAnalysis(intent="declines")
+    service.store.append_message(conversation, "assistant", "What would you like me to call you?", "en")
     second = _say(service, conversation, "I'd rather not say")
     assert conversation.case_facts.get("preferred_name") == "declined"
     assert second["follow_up_target"] != "preferred_name"
@@ -150,53 +150,55 @@ def test_a_medical_statement_is_never_stored_as_the_answer_to_a_question():
 
 
 # ---- S3 and S4: clinical detail, reports, and not repeating ------------------------------------
-def test_s3_clinical_detail_gets_the_documents_reply_then_the_flow_continues():
+def test_s3_clinical_detail_follows_the_documents_style_and_is_never_stored():
     service, model, conversation = _offered()
     # The analyzer sees redacted text for clinical messages, hence the default.
     service.analyzer.default = TurnAnalysis(intent="clinical_detail")
-    result = _say(service, conversation, "I also have asthma")
-    assert result["reply"].startswith(SCRIPTS["S3"].text)
+    _say(service, conversation, "I also have asthma")
+    assert SCRIPTS["S3"].text in model.calls[-1][0]["content"]
     assert "asthma" not in " ".join(str(v) for v in conversation.case_facts.values()).lower()
 
 
-def test_a_repeated_condition_does_not_repeat_the_same_paragraph():
-    service, _, conversation = _service({}, default=TurnAnalysis(intent="clinical_detail"))
-    replies = [_say(service, conversation, f"I have condition number {i}")["reply"] for i in range(4)]
-    assert replies[0].startswith(SCRIPTS["S3"].text)
-    # The long reply is said once; later mentions get a short, different acknowledgement.
-    assert all(SCRIPTS["S3"].text not in r for r in replies[1:])
-    assert all(len(r) < len(replies[0]) for r in replies[1:])
-    assert replies[1] != replies[2]
+def test_a_repeated_condition_is_told_not_to_reuse_earlier_wording():
+    service, model, conversation = _service({}, default=TurnAnalysis(intent="clinical_detail"))
+    for i in range(3):
+        _say(service, conversation, f"I have condition number {i}")
+    system = model.calls[-1][0]["content"]
+    assert "do not reuse their wording or openings" in system
+    assert "never copy word for word" in system
 
 
-def test_s4_asking_to_interpret_a_report_gets_the_documents_reply():
-    service, _, conversation = _service({}, default=TurnAnalysis(intent="asks_interpretation"))
-    result = _say(service, conversation, "can you read my scan?")
-    assert result["reply"].startswith(SCRIPTS["S4"].text)
+def test_s4_asking_to_interpret_a_report_follows_the_documents_style():
+    service, model, conversation = _service({}, default=TurnAnalysis(intent="asks_interpretation"))
+    _say(service, conversation, "can you read my scan?")
+    assert SCRIPTS["S4"].text in model.calls[-1][0]["content"]
 
 
 # ---- S5 to S8: wellness, the offer, accepting and declining ------------------------------------
 def test_s5_a_wellness_enquiry_asks_about_the_feeling_they_want():
-    service, _, conversation = _service({
+    service, model, conversation = _service({
         "a retreat": TurnAnalysis(
             intent="answering", category="wellness",
             facts={"wellness_programme_or_goal": "retreat"},
         ),
     })
     result = _say(service, conversation, "a retreat")
-    assert result["reply"] == SCRIPTS["S5"].text
+    assert result["follow_up_target"] == "wellness_goal"
+    assert SCRIPTS["S5"].text in model.calls[-1][0]["content"]
+    assert [a.label for a in result["suggestions"]] == ["More energy", "Calm", "A fresh start"]
 
 
-def test_s6_the_medical_offer_is_the_documents_wording_and_given_once_enough_is_shared():
-    service, _, conversation = _service({})
+def test_s6_the_medical_offer_is_made_once_enough_is_shared():
+    service, model, conversation = _service({})
     service.analyzer.script.update({
         "knee surgery": MEDICAL,
         "Germany": TurnAnalysis(intent="answering", facts={"destination_preference": "Germany"}),
         "next month": TurnAnalysis(intent="answering", facts={"preferred_timing": "next month"}),
     })
     results = [_say(service, conversation, t) for t in ["knee surgery", "Germany", "next month"]]
+    # The category plus a destination is the minimum, and three real details must be shared.
     assert results[-1]["next_action"] == "signup_handoff"
-    assert results[-1]["reply"] == SCRIPTS["S6"].text
+    assert SCRIPTS["S6"].text in model.calls[-1][0]["content"]
     assert [a.label for a in results[-1]["suggestions"]] == ["Yes, take me to signup", "Not right now"]
     assert conversation.case_facts["handoff_offered"] == "yes"
 
@@ -209,10 +211,12 @@ def test_s7_wellness_visitors_are_offered_a_free_call_with_the_curator():
                    "destination_preference": "Spain"},
         ),
     }
-    service, _, conversation = _service(script)
+    service, model, conversation = _service(script)
+    for filler in ("hi there", "just looking around"):
+        _say(service, conversation, filler)
     result = _say(service, conversation, "a longevity retreat")
     assert result["next_action"] == "signup_handoff"
-    assert result["reply"] == SCRIPTS["S7"].text
+    assert SCRIPTS["S7"].text in model.calls[-1][0]["content"]
 
 
 def test_accepting_the_offer_gives_the_signup_step_and_the_reference_without_contact_capture():
@@ -224,47 +228,47 @@ def test_accepting_the_offer_gives_the_signup_step_and_the_reference_without_con
     assert result["reference"] in system and result["reference"].startswith("HYT-")
 
 
-def test_s8_declining_the_offer_is_the_documents_reply():
+def test_s8_declining_the_offer_is_respected():
     service, model, conversation = _offered({"not now": TurnAnalysis(intent="declines")})
     result = _say(service, conversation, "not now")
     assert result["next_action"] == "handoff_declined"
-    assert result["reply"] == SCRIPTS["S8"].text
+    assert SCRIPTS["S8"].text in model.calls[-1][0]["content"]
     assert conversation.case_facts["handoff_declined"] == "yes"
 
 
 # ---- S9 to S12: contact, a person, stopping -----------------------------------------------------
-def test_s9_contact_details_typed_in_chat_are_not_stored_and_get_the_documents_reply():
-    service, _, conversation = _service({}, default=TurnAnalysis(intent="contact_request"))
-    result = _say(service, conversation, "call me on +968 9123 4567 or maria@example.com")
-    assert result["reply"].startswith(SCRIPTS["S9"].text)
+def test_s9_contact_details_typed_in_chat_are_not_stored():
+    service, model, conversation = _service({}, default=TurnAnalysis(intent="contact_request"))
+    _say(service, conversation, "call me on +968 9123 4567 or maria@example.com")
+    assert SCRIPTS["S9"].text in model.calls[-1][0]["content"]
     stored = " ".join(str(v) for v in conversation.case_facts.values())
     assert "9123" not in stored and "maria@example.com" not in stored
     assert "phone_number" not in conversation.case_facts and "email" not in conversation.case_facts
 
 
 def test_s10_wanting_a_human_points_to_the_consultation_and_the_support_channel():
-    service, _, conversation = _service({"can I talk to a person?": TurnAnalysis(intent="wants_human")})
+    service, model, conversation = _service({"can I talk to a person?": TurnAnalysis(intent="wants_human")})
     result = _say(service, conversation, "can I talk to a person?")
     assert result["next_action"] == "human_request"
-    # The support channel is still to be confirmed, so that sentence is left out.
-    assert result["reply"] == SCRIPTS["S10"].text.split(" If you'd prefer")[0]
-    fresh, _, other = _service({"can I talk to a person?": TurnAnalysis(intent="wants_human")})
+    assert "quickest route is to book your free consultation" in model.calls[-1][0]["content"]
+    fresh, fresh_model, other = _service({"can I talk to a person?": TurnAnalysis(intent="wants_human")})
     fresh.support_contact = "support@example.org"
-    assert "you can use support@example.org." in _say(fresh, other, "can I talk to a person?")["reply"]
+    _say(fresh, other, "can I talk to a person?")
+    assert "you can use support@example.org." in fresh_model.calls[-1][0]["content"]
 
 
-def test_s11_stop_messaging_is_recorded_and_the_documents_reply_is_used():
-    service, _, conversation = _service({"stop messaging me": TurnAnalysis(intent="wants_stop")})
+def test_s11_stop_messaging_is_recorded():
+    service, model, conversation = _service({"stop messaging me": TurnAnalysis(intent="wants_stop")})
     result = _say(service, conversation, "stop messaging me")
     assert result["next_action"] == "opt_out"
-    assert result["reply"] == SCRIPTS["S11"].text
+    assert SCRIPTS["S11"].text in model.calls[-1][0]["content"]
     assert conversation.case_facts["opt_out_requested"] == "yes"
 
 
-def test_s12_a_whatsapp_or_phone_request_gets_the_documents_reply():
-    service, _, conversation = _service({}, default=TurnAnalysis(intent="contact_channel"))
-    result = _say(service, conversation, "can you WhatsApp me?")
-    assert result["reply"].startswith(SCRIPTS["S12"].text)
+def test_s12_a_whatsapp_or_phone_request_follows_the_documents_style():
+    service, model, conversation = _service({}, default=TurnAnalysis(intent="contact_channel"))
+    _say(service, conversation, "can you WhatsApp me?")
+    assert SCRIPTS["S12"].text in model.calls[-1][0]["content"]
 
 
 # ---- S13 to S17: safety, age, secrets, identity, how it works -----------------------------------
@@ -293,18 +297,16 @@ def test_s15_a_pasted_password_gets_the_documents_reply_and_is_not_repeated():
     assert "hunter2" not in result["reply"] and "4111" not in result["reply"]
 
 
-def test_s16_asking_if_hayat_is_a_person_gets_the_documents_reply():
-    service, _, conversation = _service({"are you a real person?": TurnAnalysis(intent="asks_if_human")})
-    result = _say(service, conversation, "are you a real person?")
-    assert result["reply"].startswith(SCRIPTS["S16"].text)
+def test_s16_asking_if_hayat_is_a_person_follows_the_documents_style():
+    service, model, conversation = _service({"are you a real person?": TurnAnalysis(intent="asks_if_human")})
+    _say(service, conversation, "are you a real person?")
+    assert SCRIPTS["S16"].text in model.calls[-1][0]["content"]
 
 
-def test_s17_how_does_trawellcare_work_gets_the_documents_explanation_once():
+def test_s17_how_does_trawellcare_work_follows_the_documents_style():
     service, model, conversation = _service({"how does trawellcare work?": TurnAnalysis(intent="how_it_works")})
-    first = _say(service, conversation, "how does trawellcare work?")
-    assert first["reply"] == SCRIPTS["S17"].text
-    again = _say(service, conversation, "how does trawellcare work?")
-    assert again["reply"] != first["reply"] and len(again["reply"]) < len(first["reply"])
+    _say(service, conversation, "how does trawellcare work?")
+    assert SCRIPTS["S17"].text in model.calls[-1][0]["content"]
 
 
 # ---- flow, references, chips --------------------------------------------------------------------
@@ -435,7 +437,8 @@ def test_the_model_is_told_the_names_and_roles():
     service, model, conversation = _service({"hello": TurnAnalysis(intent="question")})
     _say(service, conversation, "hello")
     system = model.calls[-1][0]["content"]
-    assert "called Zoé" in system and "never use that name" in system
+    # Programme names come from the knowledge list, with the former name for recognition.
+    assert "Zoé (formerly AAfiya, AAfiyah)" in system
     assert "case manager" in system and "wellness curator" in system
 
 
@@ -480,6 +483,6 @@ def test_stale_knowledge_that_still_says_the_old_name_is_corrected_before_the_mo
     service, model, conversation = _service({"what is zoe?": TurnAnalysis(intent="question")})
     service.retriever = InMemoryRetriever([stale])
     _say(service, conversation, "what is zoe?")
-    system = model.calls[-1][0]["content"]
-    assert "Zoé is our women's wellness programme" in system
-    assert "AAFIYA" not in system.split("<evidence>")[1] and "Medical Advisor" not in system.split("<evidence>")[1]
+    passages = model.calls[-1][0]["content"].split("Passages:")[1]
+    assert "Zoé is our women's wellness programme" in passages
+    assert "AAFIYA" not in passages and "Medical Advisor" not in passages

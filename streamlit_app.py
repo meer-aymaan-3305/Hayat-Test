@@ -19,6 +19,7 @@ import requests
 import streamlit as st
 
 from hayat_backend.config import get_settings
+from hayat_backend.programmes_registry import programmes
 from hayat_backend.training_scripts import house_style
 
 st.set_page_config(page_title="Hayat", page_icon="🌿", layout="centered", initial_sidebar_state="collapsed")
@@ -72,10 +73,10 @@ st.markdown(
 
 base_url = os.getenv("HAYAT_API_URL", "http://127.0.0.1:2005")
 
+# Programme names come from the knowledge registry (knowledge_seed/programmes.json), never from code.
 PROGRAMMES = [
-    ("HAYAT-100", "Longevity and healthy ageing", "Tell me about HAYAT-100"),
-    ("Zoé", "Women's fitness and wellness", "Tell me about Zoé"),
-    ("FFounders", "Executive fitness and wellness", "Tell me about FFounders"),
+    (programme.name, programme.tagline, f"Tell me about {programme.name}")
+    for programme in programmes()
 ]
 
 

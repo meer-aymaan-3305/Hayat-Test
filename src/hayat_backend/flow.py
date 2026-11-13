@@ -64,6 +64,12 @@ def slot_updates(conversation: Any, analysis: Any) -> dict[str, tuple[str, str]]
     still_asking = bool(re.search(r"[?؟]|\b(what|how|tell me|more about|like to know)\b", last_user, re.I))
     if analysis.intent == "declines" and pending and pending not in updates and not still_asking:
         updates[pending] = ("", DECLINED)
+    # The analyzer over-reports "I don't know": believe UNSURE or DECLINED only for the slot
+    # that was just asked about, never for slots the visitor did not mention.
+    updates = {
+        sid: v for sid, v in updates.items()
+        if v[1] not in (UNSURE, DECLINED) or sid == pending
+    }
     if analysis.lane_ambiguous:  # rule 4: write nothing until the visitor says which journey
         updates = {sid: v for sid, v in updates.items() if BY_ID[sid].lane == SHARED}
     return updates
@@ -103,12 +109,16 @@ def apply_analysis(conversation: Any, analysis: Any, turn: int) -> list[tuple[st
             touched.add(lane)
 
     active = lanes_active(facts)
-    for lane in touched:
-        if lane not in active:
+    for lane in (MEDICAL, WELLNESS):
+        if lane in touched and lane not in active:
             active.append(lane)
     focus = focus_lane(facts)
     if len(touched) == 1:
         focus = next(iter(touched))  # they are talking about one journey: follow them
+    elif len(touched) > 1:
+        # Both journeys at once: work on the one the analyzer says comes first, else keep the
+        # one already in focus, else start with the treatment.
+        focus = analysis.lane if analysis.lane in touched else (focus if focus in touched else MEDICAL)
     elif not focus and active:
         focus = active[0]
     if active:
@@ -217,7 +227,19 @@ def plan_handoff(planner: Any, conversation: Any, decision: Any, intent: str | N
         re.search(r"[?؟]|\b(what|how|can|could|do you|are you|tell me|explain|"
                   r"more about|features?|include[sd]?|offer[sd]?)\b", last_user, re.I)
     )
-    blocking = asks or intent in {
+    # A correction or change of mind is the visitor's own thread (5.3 priority
+    # 4): acknowledge the change, never answer it with the signup offer.
+    correcting = bool(
+        getattr(analysis, "correction", False)
+        or re.search(
+            r"\b(actually|instead|change|wait|no i meant|i meant|correction|"
+            r"rather|scratch that|make that|update|on second thought|"
+            r"changed my mind|switch|prefer .* instead|new dates?|new budget|"
+            r"different destination|different dates?)\b",
+            last_user, re.I,
+        )
+    )
+    blocking = asks or correcting or intent in {
         "question", "mixed", "off_topic", "new_request", "clinical_detail", "asks_interpretation",
         "asks_if_human", "contact_request", "contact_channel", "what_is_trawellcare", "how_it_works", "emotional",
     }
@@ -247,7 +269,7 @@ def plan_handoff(planner: Any, conversation: Any, decision: Any, intent: str | N
     # few real details (three filled slots in this journey) before the offer
     # lands, unless the conversation has simply gone on long enough (B6).
     enough = (
-        state.meets_handoff_minimum(focus) and len(state.lane_values(focus)) >= 3
+        state.meets_handoff_minimum(focus) and len(state.lane_values(focus)) >= 3 and turns >= 3
     ) or turns >= 5
     if enough and not offered_at and not blocking and not cooling:
         return PlannedStep(
@@ -339,3 +361,32 @@ def state_snapshot(conversation: Any, step: PlannedStep | None = None) -> dict[s
         "slots": state.snapshot(),
         "heard_to_echo_once": state.heard(),
     }
+
+
+async def rebuild_writes(analyzer: Any, conversation: Any) -> list[tuple[str, Any]]:
+    """Addendum 5.2: the state was lost. Rebuild it from the last visitor messages, marking
+    every value HEARD so Hayat confirms it with the visitor before relying on it."""
+    recent = [m.content for m in conversation.messages if m.role == "user"][-4:]
+    if not recent:
+        return []
+    analysis = await analyzer.analyze(
+        text=" / ".join(recent), last_assistant="", pending_field=None, known={}, state={"rebuild": True},
+    ) if getattr(analyzer, "slots_mode", False) else None
+    if analysis is None or not (analysis.slots or analysis.facts):
+        return []
+    # Every rebuilt value is HEARD (applied below). The analysis itself is never modified.
+    state = SlotState(conversation.case_facts)
+    writes: list[tuple[str, Any]] = []
+    touched: set[str] = set()
+    for slot_id, (value, _status) in slot_updates(conversation, analysis).items():
+        if value:
+            writes += state.apply(slot_id, value, HEARD, user_turn_count(conversation))
+            if BY_ID[slot_id].lane != SHARED:
+                touched.add(BY_ID[slot_id].lane)
+    if touched:
+        focus = next(iter(touched)) if len(touched) == 1 else sorted(touched)[0]
+        writes += [
+            ("lanes_active", ",".join(l for l in (MEDICAL, WELLNESS) if l in touched)),
+            ("focus_lane", focus), ("customer_category", _LANE_CATEGORY[focus]),
+        ]
+    return writes

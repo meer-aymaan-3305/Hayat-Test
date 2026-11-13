@@ -134,6 +134,21 @@ class CoordinatorHandoffService:
             card["email"] = pick("email")
         else:
             card["contact_details"] = "Withheld until contact capture is approved (Addendum 1.1)."
+        # Each journey on its own: medical and wellness details are never merged (addendum part 2).
+        from .slots import MEDICAL, SHARED, SLOTS, WELLNESS, SlotState
+
+        state = SlotState(facts)
+        journeys: dict[str, dict[str, Any]] = {}
+        for lane, name in ((MEDICAL, "medical"), (WELLNESS, "wellness")):
+            values = {
+                slot.label: state.value(slot.id) for slot in SLOTS
+                if slot.lane == lane and state.status(slot.id) in ("HEARD", "CONFIRMED")
+                and state.value(slot.id)
+            }
+            if values:
+                journeys[name] = values
+        if journeys:
+            card["journeys"] = journeys
         messages = getattr(conversation, "messages", [])
         card["conversation_history"] = [
             {"role": m.role, "content": m.content} for m in messages
