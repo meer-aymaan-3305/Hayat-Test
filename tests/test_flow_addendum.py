@@ -455,3 +455,21 @@ def test_unanswered_questions_are_not_recorded_as_unsure():
         intent="answering", slots={"m.timeline_window": {"value": "", "status": "UNSURE"}})})
     say(service, c, "what about spa?")
     assert slots(c).status("m.timeline_window") == "EMPTY"
+
+
+def test_a_wellness_question_is_never_repeated_after_every_answer():
+    service, _, c = _chat({"a retreat in Spain": A(intent="answering", lane="WELLNESS", slots={
+        "w.destination": {"value": "Spain", "status": "CONFIRMED"}})}, default=A(intent="question"))
+    say(service, c, "a retreat in Spain")
+    asked = [say(service, c, f"what about my condition {i}?")["follow_up_target"] for i in range(5)]
+    assert "wellness_programme_or_goal" not in asked  # a goal or destination already says what it is
+    assert asked.count("w_dates_window") <= 1  # and a question just asked is not asked again while they ask things
+
+
+def test_a_question_asked_twice_without_an_answer_is_dropped():
+    service, _, c = _chat({"a retreat": A(intent="answering", lane="WELLNESS", slots={})},
+                          default=A(intent="smalltalk"),
+                          replies=("Noted. Which wellness programme or goal interests you?",))
+    c.case_facts.update({"lanes_active": "WELLNESS", "focus_lane": "WELLNESS"})
+    targets = [say(service, c, f"hmm {i}")["follow_up_target"] for i in range(6)]
+    assert "wellness_programme_or_goal" not in targets[3:]  # asked twice, then the flow moves on

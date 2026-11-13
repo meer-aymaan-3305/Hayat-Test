@@ -719,6 +719,12 @@ _GOAL_KEYWORDS = {
     "trip_duration": r"how long|duration|days|weeks|away for",
     "wellness_goal": r"feeling|goal|home with|hoping",
     "preferred_provider": r"hospital|doctor",
+    # Retreat slots: without these a question about them could never be counted as repeated.
+    "wellness_programme_or_goal": r"programme or goal|kind of (?:wellness|experience)|which wellness|what.{0,15}wellness",
+    "w_destination": r"retreat to be|where.{0,25}retreat|which destination|which country",
+    "w_dates_window": r"when are you thinking|when|time ?frame|window|how soon|month",
+    "w_participants": r"joining you|just you|how many|on your own",
+    "w_budget_band": r"budget|spend",
 }
 
 
@@ -1707,6 +1713,7 @@ class ChatService:
             slot_changes = [
                 (BY_KEY[k].label, str(v)) for k, v in slot_writes
                 if k in BY_KEY and v and str(v).lower() not in {"unsure", "declined"}
+                and str(conversation.case_facts.get(k)) != str(v)  # only what is new this turn
             ]
             if slot_writes:
                 self.store.save_fact_updates(conversation, [
@@ -2476,10 +2483,15 @@ class ChatService:
                 reply = (
                     "شكراً لك على مشاركة ذلك، أنا أستمع."
                     if language == "ar"
-                    else safe_reply(
-                        user_turn_count(conversation),
-                        next((m.content for m in reversed(conversation.messages) if m.role == "assistant"), ""),
-                        slot_changes,
+                    else (
+                        "That's a good question. I can't look that up properly just this second, so please ask me "
+                        "once more in a moment, or the team can answer it on your free consultation. 😊"
+                        if "?" in text
+                        else safe_reply(
+                            user_turn_count(conversation),
+                            next((m.content for m in reversed(conversation.messages) if m.role == "assistant"), ""),
+                            slot_changes,
+                        )
                     )
                 )
             elif recall:

@@ -246,13 +246,13 @@ def _last_assistant(conversation: Any) -> str:
     return next((m.content for m in reversed(conversation.messages) if m.role == "assistant"), "")
 
 
-def _asked_times(conversation: Any, slot_id: str) -> int:
+def _asked_times(conversation: Any, slot_id: str, window: int = 6) -> int:
     from .chat_service import _GOAL_KEYWORDS  # keyword hints per field
 
     pattern = _GOAL_KEYWORDS.get(BY_ID[slot_id].key)
     if not pattern:
         return 0
-    recent = [m.content for m in conversation.messages if m.role == "assistant"][-6:]
+    recent = [m.content for m in conversation.messages if m.role == "assistant"][-window:]
     return sum(
         1 for content in recent
         if any(re.search(pattern, part, re.I) for part in re.split(r"(?<=[.!?])\s+", content) if "?" in part)
@@ -265,7 +265,7 @@ def stuck_slot_writes(conversation: Any, turn: int, already: dict[str, Any]) -> 
     if not slot_id or any(k == BY_ID[slot_id].key for k, _ in already):
         return []
     state = SlotState(conversation.case_facts)
-    if state.status(slot_id) != "EMPTY" or _asked_times(conversation, slot_id) < 3:
+    if state.status(slot_id) != "EMPTY" or _asked_times(conversation, slot_id) < 2:
         return []
     return state.apply(slot_id, None, UNSURE, turn)
 
@@ -417,10 +417,10 @@ def plan_handoff(planner: Any, conversation: Any, decision: Any, intent: str | N
         )
 
     # 4. The next empty slot that follows naturally. HEARD, CONFIRMED, UNSURE and DECLINED are not asked.
-    slot_id = state.next_empty(focus)
+    slot_id = _next_fresh(state, conversation, focus)
     if slot_id is None and len(active) > 1:
         other = WELLNESS if focus == MEDICAL else MEDICAL
-        other_slot = state.next_empty(other)
+        other_slot = _next_fresh(state, conversation, other)
         if other_slot:
             return PlannedStep(
                 "collect_detail", "The first journey is covered; move to the other and say so.",
@@ -428,6 +428,9 @@ def plan_handoff(planner: Any, conversation: Any, decision: Any, intent: str | N
                 slot_id=other_slot, lane=other, switch_lane=True,
                 question_text=_question_for(planner, BY_ID[other_slot].key, other),
             )
+    if slot_id and blocking and _asked_times(conversation, slot_id, window=2) >= 1:
+        # They are asking something, and this slot was just asked: answer, do not ask it again.
+        return PlannedStep("answer", "The visitor asks something; the last question is still open.", answer_first=True)
     if slot_id:
         slot = BY_ID[slot_id]
         return PlannedStep(
@@ -471,6 +474,19 @@ _LANE_QUESTIONS = {
     "w_participants": "Will it be just you, or is anyone joining you?",
     "w_budget_band": "Do you have a rough budget band in mind for the retreat? A range is perfectly fine 😊",
 }
+
+
+def _next_fresh(state: SlotState, conversation: Any, lane: str) -> str | None:
+    """The next empty slot that has not already been asked about twice without an answer."""
+    for slot_id in ORDER.get(lane, ()):
+        if state.status(slot_id) != EMPTY:
+            continue
+        if slot_id == "w.experience_type" and state.lane_values(lane):
+            continue
+        if _asked_times(conversation, slot_id) >= 2:
+            continue
+        return slot_id
+    return None
 
 
 def _question_for(planner: Any, key: str, lane: str) -> str:

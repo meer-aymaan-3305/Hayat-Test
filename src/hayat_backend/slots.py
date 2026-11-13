@@ -134,8 +134,11 @@ class SlotState:
 
     def next_empty(self, lane: str) -> str | None:
         for slot_id in ORDER.get(lane, ()):
-            if self.status(slot_id) == EMPTY:
-                return slot_id
+            if self.status(slot_id) != EMPTY:
+                continue
+            if slot_id == "w.experience_type" and self.lane_values(lane):
+                continue  # a goal, destination or programme already says what kind of experience it is
+            return slot_id
         return None
 
     def meets_handoff_minimum(self, lane: str) -> bool:
