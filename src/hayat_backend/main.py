@@ -175,8 +175,12 @@ def create_app(
         store, chat_service = _services()
     else:
         chat_service = ChatService(store, create_chat_model(settings))
+    app.state.chat_service = chat_service  # for staff tools such as scripts/live_eval.py
     coordinator_service = CoordinatorHandoffService(store, settings=settings)
     knowledge_store = KnowledgeStore(settings.knowledge_dir)
+    from .programmes_registry import set_knowledge_root
+
+    set_knowledge_root(settings.knowledge_dir)  # programme names and the playbook follow the store
     attachment_store = AttachmentStore(settings.attachments_dir, settings.attachment_retention_days)
     app.state.attachments = attachment_store
     stt = create_stt(settings)
@@ -889,6 +893,41 @@ def create_app(
     async def resync_retriever() -> None:
         chunks = await run_in_threadpool(knowledge_store.indexed_chunks)
         chat_service.retriever.replace_uploaded(chunks)
+        # A re-uploaded programmes document changes the playbook's answers from the next reply.
+        from .programmes_registry import reload as reload_programmes
+
+        reload_programmes()
+
+    @app.get("/v1/admin/conversations/{conversation_id}/turns", tags=["admin"])
+    async def conversation_turns(conversation_id: str):
+        """Every turn of one conversation as the pipeline recorded it: the redacted message,
+        the state before and after, the decision, the guard results and the knowledge passages
+        used (Addendum part 8). Staff only (service token)."""
+        return {"conversation_id": conversation_id, "turns": global_audit_store.turns_for(conversation_id)}
+
+    @app.get("/v1/knowledge/programmes", tags=["knowledge"])
+    async def list_programmes():
+        """The programme registry, drafts included (knowledge base manager, Addendum part 8)."""
+        from .programmes_registry import all_records
+
+        return {"programmes": all_records()}
+
+    @app.put("/v1/knowledge/programmes", tags=["knowledge"])
+    async def replace_programmes(payload: dict):
+        """Add, rename, approve or withdraw programmes with no code change. A rename keeps the
+        old name in former_names so visitors who type it are still understood."""
+        from .programmes_registry import save_records
+
+        records = payload.get("programmes") if isinstance(payload, dict) else None
+        if not isinstance(records, list):
+            raise HTTPException(status_code=422, detail="Send {\"programmes\": [...]}.")
+        try:
+            await run_in_threadpool(save_records, records)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        from .programmes_registry import all_records
+
+        return {"programmes": all_records()}
 
     @app.post("/v1/knowledge/documents", tags=["knowledge"])
     async def upload_knowledge_document(

@@ -60,6 +60,9 @@ S67_ALL_THREE = (
     "team can share more information as the programmes develop. Is there one you'd currently prioritise?"
 )
 
+_UNKNOWN_PROGRAMME = re.compile(
+    r"\b(?:your|the|a|about)\s+((?:[A-Z][\w'-]*\s+){1,4}?(?:[\w'-]+\s+)?)(?:programme|program|retreat|bootcamp|boot camp|camp)\b",
+)
 _QUOTE_RE = re.compile(r"\b(quote|quotation|proposal|estimate)\b", re.I)
 _PRICE_RE = re.compile(r"\b(price|prices|pricing|cost|costs|how much|fee|fees|rates?|expensive|afford)\b", re.I)
 _DATES_RE = re.compile(r"\b(dates?|when (?:is|are|does|will|can)|next retreat|when.*(?:start|begin|take place|happen))\b", re.I)
@@ -71,7 +74,8 @@ _ALL_THREE_RE = re.compile(r"\b(all three|all 3|all of them|every one|each of th
 _OVERVIEW_RE = re.compile(
     r"\b(what|which) (?:programmes?|retreats?|programs?)\b|\b(three|3) (?:signature )?(?:programmes?|retreats?|programs?)\b|"
     r"\b(?:tell me about|show me|explain|what are) (?:the |your |all )?(?:signature )?(?:programmes?|retreats?|programs?)\b|"
-    r"\bwhat (?:wellness )?(?:experiences|retreats|programmes) do you (?:have|offer)\b", re.I,
+    r"\bwhat (?:wellness )?(?:experiences|retreats|programmes) do you (?:have|offer)\b|"
+    r"\b(?:one of )?your (?:own )?(?:signature )?(?:programmes?|retreats?|programs?)\b", re.I,
 )
 _WELLNESS_RE = re.compile(r"\b(retreat|retreats|programme|programmes|wellness|longevity|fitness|healthy ageing)\b", re.I)
 _SKIP_FAQ = re.compile(
@@ -117,16 +121,48 @@ def _docx_lines(path: Path) -> list[str]:
     return [unescape(re.sub(r"<[^>]+>", "", line)).strip() for line in xml.split("\n")]
 
 
+def _uploaded_lines() -> list[str] | None:
+    """The newest indexed upload of the programmes document, if the team has uploaded one."""
+    import json
+
+    from .programmes_registry import knowledge_root
+
+    root = knowledge_root()
+    try:
+        index = json.loads((root / "index.json").read_text(encoding="utf-8")).get("documents", {})
+    except (OSError, ValueError):
+        return None
+    best: tuple[int, str] | None = None
+    for doc_id, record in index.items():
+        if record.get("filename") == DOC_NAME and record.get("status") == "indexed":
+            try:
+                version = int(record.get("version") or 1)
+            except ValueError:
+                version = 1
+            if best is None or version > best[0]:
+                best = (version, doc_id)
+    if best is None:
+        return None
+    path = root / "documents" / f"{best[1]}-v{best[0]}.txt"
+    try:
+        return [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
+    except OSError:
+        return None
+
+
 @lru_cache
 def faqs() -> tuple[Faq, ...]:
-    """Every Q and A of sections 2 to 5, with the programme each belongs to."""
-    path = _doc_path()
-    if path is None:
-        return ()
-    try:
-        lines = _docx_lines(path)
-    except (OSError, KeyError, zipfile.BadZipFile):
-        return ()
+    """Every Q and A of sections 2 to 5, with the programme each belongs to. Read from the
+    newest uploaded version of the document, else from the seed copy shipped with the code."""
+    lines = _uploaded_lines()
+    if lines is None:
+        path = _doc_path()
+        if path is None:
+            return ()
+        try:
+            lines = _docx_lines(path)
+        except (OSError, KeyError, zipfile.BadZipFile):
+            return ()
     names = {p.name.lower(): p.id for p in programmes()}
     section = "general"
     out: list[Faq] = []
@@ -169,6 +205,16 @@ def faqs() -> tuple[Faq, ...]:
                 answer.append(line)
     flush()
     return tuple(out)
+
+
+def _not_in_kb() -> str:
+    names = [f"{p.name} for {p.tagline[:1].lower() + p.tagline[1:]}" for p in programmes()]
+    listed = ", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else (names[0] if names else "")
+    own = f" Our own signature programmes are {listed}." if listed else ""
+    return (
+        "I don't have that one in my details, so I won't guess about it." + own
+        + " Our wellness curator can go through other options with you on a free call."
+    )
 
 
 def _programme_in(text: str) -> str | None:
@@ -314,10 +360,15 @@ def respond(
             return done(KbReply(S65_DESTINATIONS, _chips_for(None, "destinations"), "w.destination", "destinations"))
         return done(KbReply(S65_DESTINATIONS.split(" Do you")[0], _chips_for(None, "destinations"), None, "destinations"))
 
+    unknown = _UNKNOWN_PROGRAMME.search(text)
+    if unknown and named is None and re.search(r"[A-Z]", unknown.group(1)):
+        # A named programme the knowledge base does not have (Addendum 6.2, scenario 9).
+        return done(KbReply(_not_in_kb(), _chips_for(None, "overview"), None, "not_in_kb"))
+
     if _OVERVIEW_RE.search(text) and named is None:
         return done(KbReply(S61_OVERVIEW + " " + Q61, _chips_for(None, "overview"), None, "overview"))
 
-    faq = _best_faq(text, named or context)
+    faq = _best_faq(text, named or context) if asking else None  # a statement is never an FAQ
     if faq is not None:
         question = ""
         if not _settled(state, "w.goal_category") and not any(Q62.lower() in a.lower() for a in answered_before[-3:]):

@@ -348,3 +348,24 @@ if st.query_params.get("debug") == "1" and os.getenv("HAYAT_CLOUD") == "1":
 
             for label, ok, detail in check_ai_connection():
                 st.write(f"{'✅' if ok else '❌'} {label}: {detail}")
+
+# What the pipeline decided on the last turn, so testers can report precisely (IMPLEMENTATION.md
+# phase 6): flow state, next action, reply source, guard results, passages and the slot store.
+if st.query_params.get("debug") == "1" and st.session_state.get("conversation_id"):
+    with st.expander("Last turn (team only)"):
+        try:
+            turns = api.get(
+                f"{base_url}/v1/admin/conversations/{st.session_state.conversation_id}/turns", timeout=10,
+            ).json().get("turns", [])
+        except Exception as exc:  # the debug view must never break the chat page
+            turns = []
+            st.caption(f"Could not load the turn record: {type(exc).__name__}")
+        if turns:
+            last = turns[-1]
+            st.write(
+                f"Turn {last.get('turn')} · {last.get('flow_state')} · next action {last.get('next_action')} · "
+                f"reply from {last.get('reply_source')} · {last.get('latency_ms')} ms"
+            )
+            st.write(f"Guard: {last.get('guard') or 'no failures'}")
+            st.write(f"Passages: {last.get('passage_ids') or 'none'}")
+            st.json(last.get("state_after", {}), expanded=False)

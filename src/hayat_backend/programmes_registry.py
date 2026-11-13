@@ -27,21 +27,89 @@ def _default_path() -> Path:
     return Path(__file__).resolve().parents[2] / "knowledge_seed" / "programmes.json"
 
 
+_ROOT: list[str] = []  # set by the app to the knowledge store's folder
+
+
+def set_knowledge_root(root: str) -> None:
+    _ROOT[:] = [root]
+    reload()
+
+
+def knowledge_root() -> Path:
+    if _ROOT:
+        return Path(_ROOT[0])
+    return Path(os.environ.get("KNOWLEDGE_DIR") or "data/knowledge")
+
+
+def _data_path() -> Path:
+    """Where the team's edits live (the knowledge data folder), so a rename needs no deploy."""
+    return knowledge_root() / "programmes.json"
+
+
+def registry_path() -> Path:
+    if os.environ.get("PROGRAMMES_FILE"):
+        return Path(os.environ["PROGRAMMES_FILE"])
+    return _data_path() if _data_path().exists() else _default_path()
+
+
+def _read() -> list[dict]:
+    try:
+        data = json.loads(registry_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [p for p in data.get("programmes", []) if isinstance(p, dict)]
+
+
 @lru_cache
 def programmes() -> tuple[Programme, ...]:
-    path = Path(os.environ.get("PROGRAMMES_FILE") or _default_path())
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return ()
+    """Approved programmes only (Enhanced Training B3: a programme enters after approval)."""
     return tuple(
         Programme(
             id=str(p["id"]), name=str(p["name"]), tagline=str(p.get("tagline", "")),
             former_names=tuple(str(n) for n in p.get("former_names", [])),
         )
-        for p in data.get("programmes", [])
-        if p.get("id") and p.get("name")
+        for p in _read()
+        if p.get("id") and p.get("name") and p.get("status", "approved") == "approved"
     )
+
+
+def all_records() -> list[dict]:
+    """Every record, drafts included, for the team's knowledge base manager."""
+    return _read()
+
+
+def save_records(records: list[dict]) -> None:
+    """Replace the registry with the team's edited records and use them from the next reply."""
+    seen: set[str] = set()
+    clean: list[dict] = []
+    for record in records:
+        pid, name = str(record.get("id", "")).strip(), str(record.get("name", "")).strip()
+        if not pid or not name:
+            raise ValueError("Every programme needs an id and a name.")
+        if pid in seen:
+            raise ValueError(f"Programme id {pid} is used twice.")
+        seen.add(pid)
+        status = str(record.get("status", "approved"))
+        if status not in {"approved", "draft"}:
+            raise ValueError("Status must be approved or draft.")
+        clean.append({
+            "id": pid, "name": name, "tagline": str(record.get("tagline", "")).strip(),
+            "former_names": [str(n).strip() for n in record.get("former_names", []) if str(n).strip()],
+            "status": status,
+        })
+    path = Path(os.environ["PROGRAMMES_FILE"]) if os.environ.get("PROGRAMMES_FILE") else _data_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"programmes": clean}, indent=2, ensure_ascii=False), encoding="utf-8")
+    reload()
+
+
+def reload() -> None:
+    """Drop every cached copy of the names, so the next reply uses the current ones."""
+    from . import kb_playbook
+
+    programmes.cache_clear()
+    _rename_rules.cache_clear()
+    kb_playbook.faqs.cache_clear()
 
 
 @lru_cache

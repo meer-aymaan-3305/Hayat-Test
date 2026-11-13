@@ -369,7 +369,7 @@ def test_chips_reach_the_page_as_related_suggestions():
     result = _say(service, conversation, "what is AAfiya?")
     assert "[[" not in result["reply"] and "chips" not in result["reply"]
     assert [a.label for a in result["suggestions"]] == ["How long is it?", "Is it only for women?"]
-    assert "SUGGESTED NEXT STEPS" in service.model.calls[-1][0]["content"]
+    assert "NEXT STEPS: end with one line" in service.model.calls[-1][0]["content"]
 
 
 def test_the_reference_is_a_short_readable_number_that_stays_the_same():

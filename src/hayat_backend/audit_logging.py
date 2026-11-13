@@ -16,8 +16,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+import json
 import logging
+import os
+from pathlib import Path
 from typing import Any, Literal
+
+
+def _turn_log_path() -> Path | None:
+    """Where turn records are kept on disk: HAYAT_TURN_LOG, off in the test suite."""
+    if os.environ.get("APP_ENV") == "test" and not os.environ.get("HAYAT_TURN_LOG"):
+        return None
+    return Path(os.environ.get("HAYAT_TURN_LOG") or "data/turn_records.jsonl")
 from uuid import UUID, uuid4
 
 logger = logging.getLogger("hayat.audit")
@@ -139,6 +149,47 @@ class ComplianceAuditStore:
         self.priority_incidents: list[PriorityIncidentLogEvent] = []
         self.access_logs: list[AuditAccessLogEvent] = []
         self.coordinator_logs: list[CoordinatorLifecycleLogEvent] = []
+        # One record per chat turn (Addendum part 8, logging): admin module only, never sent to
+        # the CRM or ad platforms. The visitor's message is stored redacted.
+        self.turn_records: list[dict] = []
+
+    def log_turn(self, record: dict) -> dict:
+        entry = {"timestamp": datetime.now(UTC).isoformat(), **record}
+        self.turn_records.append(entry)
+        if len(self.turn_records) > 20000:  # an in-memory ledger must not grow without bound
+            del self.turn_records[:5000]
+        path = _turn_log_path()
+        if path is not None:
+            # Kept on disk too, so a restart does not lose the record (admin module only).
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(entry, default=str, ensure_ascii=False) + "\n")
+            except OSError:
+                pass
+        return entry
+
+    def turns_for(self, conversation_id: str) -> list[dict]:
+        found = [r for r in self.turn_records if str(r.get("conversation_id")) == str(conversation_id)]
+        if found:
+            return found
+        path = _turn_log_path()
+        if path is None or not path.exists():
+            return []
+        out = []
+        try:
+            with path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    if f'"{conversation_id}"' in line:
+                        try:
+                            record = json.loads(line)
+                        except ValueError:
+                            continue
+                        if str(record.get("conversation_id")) == str(conversation_id):
+                            out.append(record)
+        except OSError:
+            return []
+        return out
 
     def log_transcript(
         self,

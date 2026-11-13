@@ -85,7 +85,10 @@ class GroqChatModel:
         self._max_tokens = self.settings.groq_max_tokens
         self._timeout = self.settings.groq_timeout_seconds
 
-    async def complete(self, messages: list[dict[str, str]]) -> str:
+    # The composer may ask for the reply as structured JSON (IMPLEMENTATION.md, phase 3).
+    supports_json = True
+
+    async def complete(self, messages: list[dict[str, str]], json_mode: bool = False) -> str:
         """Ask the primary model; if it is rate limited or down, try the other Groq models
         and then the backup provider, so one account's limit never silences the chat."""
         from groq import APIError, AuthenticationError, RateLimitError
@@ -103,6 +106,8 @@ class GroqChatModel:
             for attempt in range(2):
                 await wait_for_window()  # the per-minute token window is shared by every Groq model
                 try:
+                    if json_mode:
+                        return await self._complete_with(model, messages, json_mode)
                     return await self._complete_with(model, messages)
                 except RateLimitError as exc:
                     wait = retry_wait(exc)
@@ -123,25 +128,31 @@ class GroqChatModel:
                 break
         if self._backup is not None:
             try:
+                if json_mode:
+                    return await self._complete_backup(messages, json_mode)
                 return await self._complete_backup(messages)
             except CompatError as exc:
                 last_error = exc
                 logger.warning("backup model failed: %s", exc)
         raise LLMError("Configured language model request failed.") from last_error
 
-    async def _complete_backup(self, messages: list[dict[str, str]]) -> str:
+    async def _complete_backup(self, messages: list[dict[str, str]], json_mode: bool = False) -> str:
         budget = max(self._max_tokens, 1500)  # some providers think before answering
         text = ""
         for _attempt in range(2):
             text, finish = await self._backup.chat(
-                messages, max_tokens=budget, temperature=self._temperature
+                messages, max_tokens=budget, temperature=self._reply_temperature(json_mode), json_mode=json_mode,
             )
             if finish != "length":
                 return text
             budget *= 2
         return _trim_to_last_sentence(text)
 
-    async def _complete_with(self, model: str, messages: list[dict[str, str]]) -> str:
+    def _reply_temperature(self, json_mode: bool) -> float:
+        # Addendum 7.2: low temperature for extraction, a moderate one for the reply.
+        return max(self._temperature, 0.5) if json_mode else self._temperature
+
+    async def _complete_with(self, model: str, messages: list[dict[str, str]], json_mode: bool = False) -> str:
         gpt_oss = model.startswith("openai/gpt-oss")
         qwen = model.startswith("qwen/")
         # gpt-oss spends completion tokens on hidden thinking, so it needs a larger
@@ -155,10 +166,12 @@ class GroqChatModel:
                 kwargs["reasoning_effort"] = "low"
             elif qwen:
                 kwargs["reasoning_effort"] = "none"
+            if json_mode:
+                kwargs["response_format"] = {"type": "json_object"}
             response = await self._client.chat.completions.create(
                 model=model,
                 messages=messages,
-                temperature=self._temperature,
+                temperature=self._reply_temperature(json_mode),
                 max_tokens=budget,
                 timeout=self._timeout,
                 **kwargs,
@@ -169,7 +182,7 @@ class GroqChatModel:
                 return text
             budget *= 2  # empty or cut off at the limit: retry once with more room
         if text:
-            return _trim_to_last_sentence(text)
+            return text if json_mode else _trim_to_last_sentence(text)
         raise LLMError("Groq returned an empty response.")
 
 
@@ -182,7 +195,8 @@ def backup_client(settings: Settings) -> OpenAICompatClient | None:
             settings.llm_fallback_model,
             timeout=settings.groq_timeout_seconds,
             # Gemini 2.5 thinks before answering (3s); without it a reply takes about 1s.
-            extra={"reasoning_effort": "none"} if "gemini-2.5" in settings.llm_fallback_model else None,
+            # Gemini thinks before answering (seconds); a chat reply does not need it.
+            extra={"reasoning_effort": "none"} if "gemini" in settings.llm_fallback_model else None,
         )
     return None
 

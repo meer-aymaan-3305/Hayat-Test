@@ -6,6 +6,27 @@ Source of requirements: `Hayat_Flow_and_State_Addendum_v1.docx`, read together w
 
 ---
 
+## 0. Progress (updated 14 November 2026)
+
+| Phase | Status | What shipped | Tests |
+|---|---|---|---|
+| 0 Stabilise | Done | `pre_extract.py` (greetings, thanks and playbook turns skip the extraction model; the specialty label is read in code from the raw text, so redaction no longer hides the journey); core rules cut from about 420 to about 300 words; fallbacks name what the visitor asked (`turn_guard.safe_reply`, `topic_of`) | `test_phase0_budget.py` |
+| 1 One pipeline | Done for production | `turn/pipeline.py`: the handoff turn as named steps (understand, remember, inspect, decide, source, compose, finish). `ChatService.respond` hands every handoff turn to it. Removed from the production path: the template question swap (`_align_question`), the short answer clarify block and its flat fact write, the persona ambiguity note, the in-chat summary and CP-5 consent block, the offline FAQ and document branches, the legacy fallback ladder | golden snapshots (20 conversations, 48 turns) plus the whole suite |
+| 1b Delete legacy code | **Waiting for owner approval** | The legacy intake bot still exists for `SIGNUP_HANDOFF=false` and 400+ tests run it. Deleting it removes those tests and the in-chat phone, OTP and consent flow. The plan's targets (`respond` under 150 lines, `chat_service.py` under 1,200) depend on this decision | |
+| 2 Understanding and state | Done | `slot_values.py` (allowed values per slot: countries, regions, counts, windows, durations, bands, labels, KB programmes; anything else is HEARD in the visitor's words or dropped); `flow.next_flow_state` (the Part 5 transition table, enforced and logged, GENERAL_QA returns to where it came from, SAFETY_HOLD sticky except after S15); `flow.state_problems` (G11, a corrupt state is cleared and rebuilt as HEARD); `s.language` slot | `test_phase2_state.py` |
+| 3 Composer and guard | Done | JSON composer (`acknowledge`, `answer`, `bridge`, `ask`, `chips`) when the model supports it, temperature 0.5 for replies; G6 claim check (names, numbers and claim words need a source), G7 list flattening, stock openers never reused in a conversation, echo check widened, length matching, used openings listed, UNSURE options once | `test_phase3_guard.py`, `test_phase3_composer.py` |
+| 4 Grounding and knowledge | Done | Sentence aware chunking; instruction text and unbacked built-in passages excluded from facts; programme registry editable through `GET/PUT /v1/knowledge/programmes` with draft status, stored with the knowledge data; the playbook reads the newest uploaded programmes document | `test_phase4_knowledge.py` |
+| 5 Records and measures | Done | One TurnRecord per reply in the audit store (redacted message, state before and after, decision, guard results, passage IDs, latency); `GET /v1/admin/conversations/{id}/turns`; `measures.py` (11.1); `scripts/live_eval.py` (Part 11 scenarios against the real models) | `test_phase5_records.py` |
+| 6 Craft | Done | Rolling slot only summary after six messages; unsupported language gets English and an offer; intake stops once the offer is made and enough is known; `?debug=1` panel in Streamlit shows the last turn record | `test_phase6_craft.py` |
+
+| Resilience | Done | When the extraction or reply model is unavailable (rate limit, quota, outage), code reads the message clause by clause (journey, places, time window, companions, corrections, refusals, health detail, booking and person requests, instruction attempts) and the approved wording is used for the offer, decline, person request, health detail and unknown programmes. All 20 live evaluation scenarios pass on code alone | `test_outage_resilience.py`, `scripts/live_eval.py --gemini` |
+
+Live evaluation status: the Groq account's daily token limit (200,000 per model) and the Gemini free tier both ran out during testing on 14 November, so the replies written by the model itself still need a full live run once quota allows (`uv run python scripts/live_eval.py -v`).
+
+Still open, by decision rather than by omission: the owner decisions in section 7, the legacy deletion above, and the provider quota (section 7, item 3). The approved language list defaults to English and Arabic.
+
+---
+
 ## 1. Summary
 
 The Addendum asks for two halves that ship together: behaviour rules (Parts 1 to 7, 9, 10) and four pieces of engineering outside the model (slot store, flow controller, turn guard, grounding with a claim check). Over the last two weeks the four pieces were added, but they were added **inside** an older chatbot rather than **instead of** it. The result is one 3,800 line `chat_service.py` in which two architectures compete for every turn: the old one (question planner, clarify ladder, programme enquiry capture, phone and OTP flow, canned FAQ replies, legacy fact extraction) and the new one (slots, flow controller, guard, playbook). Which one answers depends on feature flags, on whether the model is reachable, and on the order of twenty seven `if clarification_reply is None` branches.

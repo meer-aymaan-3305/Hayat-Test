@@ -33,6 +33,7 @@ class SlotDef:
 SLOTS: tuple[SlotDef, ...] = (
     SlotDef("s.preferred_name", SHARED, "preferred_name", "what to call them", "what they would like to be called"),
     SlotDef("s.residence_country", SHARED, "current_country", "country of residence", "which country they are based in"),
+    SlotDef("s.language", SHARED, "visitor_language", "language", "never asked: taken from the first message"),
     SlotDef("m.service_category", MEDICAL, "procedure_or_service", "treatment type", "what kind of treatment or specialty"),
     SlotDef("m.destination_country", MEDICAL, "destination_preference", "treatment destination", "which country they would travel to for treatment"),
     SlotDef("m.timeline_window", MEDICAL, "preferred_timing", "treatment timeframe", "a rough window for the treatment"),

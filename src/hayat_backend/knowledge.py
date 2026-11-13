@@ -129,17 +129,34 @@ def _extract_text(filename: str, data: bytes) -> str:
 
 
 def _chunk_text(text: str) -> list[str]:
-    text = re.sub(r"\s+", " ", text).strip()
-    if not text:
-        return []
+    """Passages that never start or end mid sentence (IMPLEMENTATION.md, phase 4). Paragraphs
+    and sentences are packed up to the chunk size; the last sentence of one passage opens the
+    next, so a fact that sits on a boundary is still found whole."""
+    paragraphs = [re.sub(r"\s+", " ", p).strip() for p in re.split(r"\n+", text)]
+    sentences: list[str] = []
+    for paragraph in paragraphs:
+        if not paragraph:
+            continue
+        parts = [s.strip() for s in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])", paragraph) if s.strip()]
+        for part in parts:
+            # A single very long sentence is still split, at word boundaries.
+            while len(part) > _CHUNK_SIZE:
+                cut = part.rfind(" ", 0, _CHUNK_SIZE)
+                cut = cut if cut > _CHUNK_SIZE // 2 else _CHUNK_SIZE
+                sentences.append(part[:cut].strip())
+                part = part[cut:].strip()
+            if part:
+                sentences.append(part)
     chunks: list[str] = []
-    start = 0
-    while start < len(text):
-        end = min(start + _CHUNK_SIZE, len(text))
-        chunks.append(text[start:end].strip())
-        if end == len(text):
-            break
-        start = end - _CHUNK_OVERLAP
+    current: list[str] = []
+    for sentence in sentences:
+        if current and len(" ".join(current + [sentence])) > _CHUNK_SIZE:
+            chunks.append(" ".join(current))
+            overlap = current[-1] if len(current[-1]) <= _CHUNK_OVERLAP * 2 else ""
+            current = [overlap] if overlap else []
+        current.append(sentence)
+    if current:
+        chunks.append(" ".join(current))
     return [c for c in chunks if c]
 
 

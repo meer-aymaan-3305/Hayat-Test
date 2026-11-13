@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from .question_planner import PlannedStep
+from .slot_values import check as check_value
 from .slots import (
     BY_ID, CONFIRMED, DECLINED, EMPTY, HEARD, MEDICAL, NEVER_ASK_AGAIN, ORDER, SHARED, SLOTS,
     UNSURE, WELLNESS, LANE_OF_KEY, SlotState, slot_for,
@@ -126,7 +127,17 @@ def slot_updates(conversation: Any, analysis: Any) -> dict[str, tuple[str, str]]
     }
     if lane_unclear(analysis, last_user):  # rule 4: write nothing until the visitor says which journey
         updates = {sid: v for sid, v in updates.items() if BY_ID[sid].lane == SHARED}
-    return updates
+    # Allowed values (Addendum 2.3): normalise what fits, keep what does not as HEARD in the
+    # visitor's own short words, and drop what must never be stored.
+    checked: dict[str, tuple[str, str]] = {}
+    for sid, (value, status) in updates.items():
+        if status in (UNSURE, DECLINED):
+            checked[sid] = (value, status)
+            continue
+        result = check_value(sid, value, status)
+        if result.value is not None:
+            checked[sid] = (result.value, result.status)
+    return checked
 
 
 def apply_analysis(conversation: Any, analysis: Any, turn: int) -> list[tuple[str, Any]]:
@@ -220,6 +231,30 @@ def change_asked_write(facts: dict[str, Any]) -> list[tuple[str, Any]]:
     return [("pending_change", json.dumps({**change, "asked": True}, ensure_ascii=False))]
 
 
+_REGION_COUNTRIES = {
+    "europe": {"spain", "portugal", "france", "germany", "italy", "greece", "switzerland", "austria", "turkey",
+               "united kingdom", "netherlands", "croatia", "cyprus", "malta", "ireland", "poland", "hungary",
+               "czech republic", "czechia", "belgium", "sweden", "norway", "denmark", "finland", "iceland"},
+    "asia": {"india", "japan", "singapore", "thailand", "malaysia", "indonesia", "bali", "vietnam", "sri lanka",
+             "maldives", "south korea", "korea", "china", "philippines", "nepal", "bhutan"},
+    "middle east": {"united arab emirates", "dubai", "abu dhabi", "oman", "qatar", "bahrain", "kuwait",
+                    "saudi arabia", "jordan", "lebanon", "turkey"},
+    "gulf": {"united arab emirates", "dubai", "abu dhabi", "oman", "qatar", "bahrain", "kuwait", "saudi arabia"},
+    "americas": {"united states", "canada", "mexico", "brazil", "costa rica", "argentina", "chile", "colombia", "peru"},
+    "north america": {"united states", "canada", "mexico"},
+    "south east asia": {"thailand", "malaysia", "indonesia", "bali", "vietnam", "singapore", "philippines"},
+    "southeast asia": {"thailand", "malaysia", "indonesia", "bali", "vietnam", "singapore", "philippines"},
+    "mediterranean": {"spain", "italy", "greece", "cyprus", "malta", "croatia", "turkey", "france"},
+}
+
+
+def _narrows(old: str, new: str) -> bool:
+    """True when the new place lies inside the old region."""
+    region = old.removeprefix("the ").strip()
+    places = [p.strip() for p in re.split(r"\band\b|,", new) if p.strip()]
+    return region in _REGION_COUNTRIES and bool(places) and all(p in _REGION_COUNTRIES[region] for p in places)
+
+
 def _settle_changes(
     conversation: Any, analysis: Any, state: SlotState, updates: dict[str, tuple[str, str]],
 ) -> tuple[dict[str, tuple[str, str]], list[tuple[str, Any]]]:
@@ -259,6 +294,8 @@ def _settle_changes(
         a, b = _norm(old), _norm(value)
         if a == b or a in b or b in a:
             continue  # the same thing, or a more specific version of it
+        if _narrows(a, b):
+            continue  # "Europe" then "Spain": a country inside the region is a refinement (9.1)
         updates.pop(sid)
         writes.append(("pending_change", json.dumps({"slot": sid, "new": value, "old": old}, ensure_ascii=False)))
         break  # one check at a time
@@ -434,6 +471,12 @@ def plan_handoff(planner: Any, conversation: Any, decision: Any, intent: str | N
             question_goal="signup handoff", target_field="handoff", lane=focus,
         )
 
+    # Part 10: once the free consultation has been offered and enough is known, intake is not
+    # extended. More details are welcome when the visitor volunteers them; Hayat stops asking.
+    volunteering = analysis is not None and bool(getattr(analysis, "slots", None))
+    if offered_at and state.meets_handoff_minimum(focus) and not volunteering:
+        return PlannedStep("answer", "Enough is known and the consultation was offered: no more intake questions.")
+
     # 4. The next empty slot that follows naturally. HEARD, CONFIRMED, UNSURE and DECLINED are not asked.
     slot_id = _next_fresh(state, conversation, focus)
     if slot_id is None and len(active) > 1:
@@ -536,7 +579,95 @@ def flow_state_for(step: PlannedStep, facts: dict[str, Any], intent: str | None)
         return "MEDICAL_INTAKE"
     if focus == WELLNESS:
         return "WELLNESS_INTAKE"
-    return "DISCOVERY" if facts.get("flow_state") not in (None, "", "GREETING") else "GREETING"
+    # GREETING is the first message and the optional name; after that, discovery.
+    return "DISCOVERY" if facts.get("flow_state") else "GREETING"
+
+
+FLOW_STATES = (
+    "GREETING", "DISCOVERY", "MEDICAL_INTAKE", "WELLNESS_INTAKE", "GENERAL_QA", "HANDOFF_OFFERED",
+    "HANDOFF_DECLINED", "SAFETY_HOLD", "CLOSED",
+)
+_INTAKE = {"MEDICAL_INTAKE", "WELLNESS_INTAKE"}
+# Addendum part 5, allowed next states. Three additions, all logged when used: a first message
+# that already names a journey goes straight from GREETING to that intake; a first message that
+# asks to book gets the offer straight away (scenario 17); and a visitor who writes again after
+# CLOSED reopens the conversation instead of being ignored.
+ALLOWED_NEXT: dict[str, set[str]] = {
+    "GREETING": {"DISCOVERY", "GENERAL_QA", "HANDOFF_OFFERED", "CLOSED"} | _INTAKE,
+    "DISCOVERY": _INTAKE | {"GENERAL_QA", "HANDOFF_OFFERED", "CLOSED"},
+    "MEDICAL_INTAKE": {"WELLNESS_INTAKE", "GENERAL_QA", "HANDOFF_OFFERED", "CLOSED"},
+    "WELLNESS_INTAKE": {"MEDICAL_INTAKE", "GENERAL_QA", "HANDOFF_OFFERED", "CLOSED"},
+    "GENERAL_QA": {"DISCOVERY", "GENERAL_QA", "HANDOFF_OFFERED", "CLOSED"} | _INTAKE,
+    "HANDOFF_OFFERED": {"HANDOFF_DECLINED", "CLOSED", "GENERAL_QA"} | _INTAKE,
+    "HANDOFF_DECLINED": {"GENERAL_QA", "HANDOFF_OFFERED", "CLOSED", "DISCOVERY"} | _INTAKE,
+    "SAFETY_HOLD": set(),  # intake stops for S13 and S14; S15 returns to the previous state
+    "CLOSED": {"DISCOVERY", "GENERAL_QA", "HANDOFF_OFFERED"} | _INTAKE,
+}
+
+
+def next_flow_state(facts: dict[str, Any], candidate: str, *, returnable: bool = False) -> list[tuple[str, str]]:
+    """Apply the transition table. Returns the facts to write: the new state and, when entering
+    GENERAL_QA or SAFETY_HOLD, the state to return to. A move the table does not allow is
+    logged and refused (the state stays where it was)."""
+    import logging
+
+    log = logging.getLogger("hayat.flow")
+    current = facts.get("flow_state") if facts.get("flow_state") in FLOW_STATES else "GREETING"
+    previous = facts.get("previous_flow_state") if facts.get("previous_flow_state") in FLOW_STATES else ""
+    if candidate == current and candidate not in {"GENERAL_QA", "SAFETY_HOLD"}:
+        return [("flow_state", candidate)]
+    if candidate == "SAFETY_HOLD":
+        # Safety always wins; a pasted secret (S15) is the only hold that returns afterwards.
+        return [("flow_state", "SAFETY_HOLD"), ("previous_flow_state", current if returnable else "")]
+    if current == "SAFETY_HOLD":
+        if previous:
+            return [("flow_state", previous), ("previous_flow_state", "")]
+        log.info("flow_guard refused %s -> %s (safety hold without return)", current, candidate)
+        return [("flow_state", current)]
+    if current == "GENERAL_QA" and candidate in _INTAKE | {"DISCOVERY"} and previous in _INTAKE | {"DISCOVERY"}:
+        # Back to where the side question came from, unless the visitor moved on themselves.
+        candidate = candidate if candidate in _INTAKE else previous
+    if candidate not in ALLOWED_NEXT.get(current, set()):
+        log.info("flow_guard refused %s -> %s", current, candidate)
+        return [("flow_state", current)]
+    if current == "CLOSED" or (current == "GREETING" and candidate not in {"DISCOVERY", "GENERAL_QA"}):
+        log.info("flow_guard %s -> %s (addition to the addendum's table)", current, candidate)
+    writes = [("flow_state", candidate)]
+    if candidate == "GENERAL_QA" and current != "GENERAL_QA":
+        writes.append(("previous_flow_state", current))
+    elif candidate != "GENERAL_QA" and previous:
+        writes.append(("previous_flow_state", ""))
+    return writes
+
+
+def state_problems(facts: dict[str, Any]) -> list[str]:
+    """Guard G11: the state object is present, valid and current. Returns what is wrong."""
+    import json as _json
+
+    problems: list[str] = []
+    raw = facts.get("slot_meta")
+    if raw:
+        try:
+            meta = _json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError):
+            return ["slot_meta is not valid JSON"]
+        if not isinstance(meta, dict):
+            return ["slot_meta is not an object"]
+        for slot_id, entry in meta.items():
+            if slot_id not in BY_ID:
+                problems.append(f"unknown slot {slot_id}")
+            elif not isinstance(entry, dict) or entry.get("status") not in {EMPTY, HEARD, CONFIRMED, UNSURE, DECLINED}:
+                problems.append(f"bad status for {slot_id}")
+    if facts.get("flow_state") not in (None, "", *FLOW_STATES):
+        problems.append("unknown flow state")
+    if facts.get("focus_lane") not in (None, "", MEDICAL, WELLNESS):
+        problems.append("unknown focus lane")
+    for lane in str(facts.get("lanes_active") or "").split(","):
+        if lane and lane not in (MEDICAL, WELLNESS):
+            problems.append("unknown lane")
+    if facts.get("pending_slot") not in (None, "") and facts.get("pending_slot") not in BY_ID:
+        problems.append("unknown pending slot")
+    return problems
 
 
 def state_snapshot(conversation: Any, step: PlannedStep | None = None) -> dict[str, Any]:
