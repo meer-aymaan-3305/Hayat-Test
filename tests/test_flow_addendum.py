@@ -175,6 +175,7 @@ def test_14_a_declined_budget_is_never_asked_again_this_session():
     })
     say(service, c, "knee in India")
     c.case_facts["pending_slot"] = "m.budget_band"
+    service.store.append_message(c, "assistant", "Do you have a rough budget band in mind?", "en")
     say(service, c, "no thanks")
     assert slots(c).status("m.budget_band") == "DECLINED"
     asked = [say(service, c, f"more {i}")["follow_up_target"] for i in range(4)]
@@ -473,3 +474,62 @@ def test_a_question_asked_twice_without_an_answer_is_dropped():
     c.case_facts.update({"lanes_active": "WELLNESS", "focus_lane": "WELLNESS"})
     targets = [say(service, c, f"hmm {i}")["follow_up_target"] for i in range(6)]
     assert "wellness_programme_or_goal" not in targets[3:]  # asked twice, then the flow moves on
+
+
+def test_where_they_live_is_residence_not_the_treatment_destination():
+    service, _, c = _chat({"we're in Oman": A(intent="answering", lane="MEDICAL", slots={
+        "m.destination_country": {"value": "Oman", "status": "CONFIRMED"}})})
+    say(service, c, "we're in Oman")
+    assert slots(c).value("s.residence_country") == "Oman"
+    assert slots(c).status("m.destination_country") == "EMPTY"
+
+
+def test_an_opinion_style_change_is_checked_not_dropped():
+    service, model, c = _confirmed_chat({"Actually maybe Turkey is better, what do you think?": A(
+        intent="question", lane="MEDICAL", slots=TURKEY)})
+    result = say(service, c, "Actually maybe Turkey is better, what do you think?")
+    assert result["next_action"] == "confirm_change"
+    assert slots(c).value("m.destination_country") == "India"
+
+
+def test_the_guard_drops_an_echo_of_the_visitors_question():
+    kw = dict(plan=None, state=SlotState({}), focus=None, active=[], assistant_history=["Hello."], knowledge="", turn=4)
+    out = guard_check("You're asking about the length of the retreat. It lasts seven days.", user_text="how long?", **kw)
+    assert out.reply == "It lasts seven days." and "G13" in out.failures
+
+
+def test_the_shared_limit_window_is_waited_for_not_hopped_over():
+    from hayat_backend import ratelimit
+
+    class Err(Exception):
+        response = type("R", (), {"headers": {"retry-after": "3"}})()
+
+    assert ratelimit.retry_wait(Err()) == 3.0
+    assert ratelimit.retry_wait(type("E", (), {"response": type("R", (), {"headers": {"x-ratelimit-reset-tokens": "1m2.5s"}})()})()) == 62.5
+    ratelimit.note_limited(4)
+    assert 0 < ratelimit.short_wait_left() <= 4
+    ratelimit.note_limited(500)  # a long limit is not waited for
+    ratelimit.reset()
+    assert ratelimit.short_wait_left() == 0
+
+
+def test_a_companions_name_or_age_gets_a_privacy_note_and_a_bare_yes_gets_a_gentle_check():
+    service, model, c = _confirmed_chat({"Mum's name is Fatima and she's 68": A(intent="smalltalk")})
+    say(service, c, "Mum's name is Fatima and she's 68")
+    assert "PRIVACY" in model.calls[-1][0]["content"]
+    service.store.append_message(c, "assistant", "Roughly when are you hoping to have the treatment?", "en")
+    say(service, c, "yes")
+    assert "CHECK: the visitor sent a bare yes" in model.calls[-1][0]["content"]
+
+
+def test_a_repeated_consultation_pitch_is_removed_when_no_offer_is_due():
+    kw = dict(plan=None, state=SlotState({}), focus=None, active=[], assistant_history=["Hello."], knowledge="", turn=4)
+    out = guard_check("Lovely choice. Would you like to arrange the free consultation now?", user_text="India", **kw)
+    assert "arrange" not in out.reply and "G5" in out.failures
+
+
+def test_a_health_fit_question_gets_a_no_advice_instruction():
+    service, model, c = _confirmed_chat({"can someone with high blood pressure join a retreat?": A(intent="question")})
+    say(service, c, "can someone with high blood pressure join a retreat?")
+    system = " ".join(call[0]["content"] for call in model.calls)
+    assert "HEALTH QUESTION" in system and "Do NOT say yes, no, safe" in system

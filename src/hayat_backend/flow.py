@@ -44,6 +44,11 @@ def pending_slot_id(facts: dict[str, Any]) -> str | None:
     return slot if slot in BY_ID else None
 
 
+_RESIDENCE = re.compile(
+    r"\b(?:i['’]?m|we['’]?re|i am|we are|i live|we live|living|based)\s+(?:currently\s+|based\s+)?(?:in|from)\s+"
+    r"([A-Za-z][A-Za-z .'-]{1,28}?)(?:[,.!?]|\s+and\b|\s+but\b|$)",
+    re.I,
+)
 _DONT_KNOW = re.compile(
     r"not sure|don'?t know|do not know|no idea|unsure|haven'?t (?:decided|thought)|undecided|not yet|"
     r"flexible|no preference|any(?:thing| is fine)|whatever|open to (?:anything|suggestions)|you (?:tell|suggest|decide)",
@@ -81,6 +86,12 @@ def slot_updates(conversation: Any, analysis: Any) -> dict[str, tuple[str, str]]
         if slot and slot not in updates:
             updates[slot] = (str(value), CONFIRMED)
     pending = pending_slot_id(facts)
+    if pending:
+        from .chat_service import _GOAL_KEYWORDS
+
+        # Only a slot the last reply actually asked about can be answered or refused.
+        if _GOAL_KEYWORDS.get(BY_ID[pending].key) and not _asked_times(conversation, pending, window=1):
+            pending = None
     last_user = next(
         (m.content for m in reversed(conversation.messages) if m.role == "user"), ""
     )
@@ -93,6 +104,14 @@ def slot_updates(conversation: Any, analysis: Any) -> dict[str, tuple[str, str]]
         sid: v for sid, v in updates.items()
         if v[1] not in (UNSURE, DECLINED) or sid == pending
     }
+    # "I'm in Oman" says where they live, whatever the analyzer made of it.
+    place = _RESIDENCE.search(last_user)
+    if place:
+        country = place.group(1).strip(" .,'").lower()
+        for sid in ("m.destination_country", "w.destination"):
+            if sid in updates and updates[sid][0].strip().lower() == country:
+                updates.pop(sid)
+                updates["s.residence_country"] = (place.group(1).strip(" .,'").title(), CONFIRMED)
     # ...and only when the visitor's own words say so, not because the question went unanswered.
     updates = {
         sid: v for sid, v in updates.items()
@@ -301,12 +320,7 @@ def plan_handoff(planner: Any, conversation: Any, decision: Any, intent: str | N
 
     # A new value that contradicts a confirmed one is checked once, lightly (addendum 4.1).
     change = pending_change(facts)
-    short_ask = intent == "question" and len(
-        next((m.content for m in reversed(messages) if m.role == "user"), "").split()
-    ) <= 6
-    if change and not change.get("asked") and (
-        intent not in {"question", "what_is_trawellcare", "how_it_works"} or short_ask
-    ):
+    if change and not change.get("asked") and intent not in {"what_is_trawellcare", "how_it_works"}:
         slot = BY_ID[change["slot"]]
         return PlannedStep(
             "confirm_change", "A new answer conflicts with a confirmed one: check it once.",
@@ -469,6 +483,7 @@ def _is_closing(conversation: Any, intent: str | None) -> bool:
 
 
 _LANE_QUESTIONS = {
+    "preferred_timing": "Roughly when are you hoping to have the treatment?",
     "w_destination": "Where would you love the retreat to be?",
     "w_dates_window": "Roughly when are you thinking of going?",
     "w_participants": "Will it be just you, or is anyone joining you?",

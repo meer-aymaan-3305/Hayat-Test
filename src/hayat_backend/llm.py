@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 import time
 from dataclasses import dataclass
 from typing import Protocol
@@ -89,24 +90,37 @@ class GroqChatModel:
         and then the backup provider, so one account's limit never silences the chat."""
         from groq import APIError, AuthenticationError, RateLimitError
 
+        from .ratelimit import MAX_WAIT, note_limited, retry_wait, wait_for_window
+
         last_error: Exception | None = None
-        now = time.monotonic()
-        for model in [self._model, *self._fallbacks]:
-            if self._cooldown_until.get(model, 0) > now:
+        models = [self._model, *self._fallbacks]
+        soonest = min(self._cooldown_until.get(m, 0) for m in models) - time.monotonic()
+        if 0 < soonest <= MAX_WAIT:  # every model is cooling down: wait for the first to reopen
+            await asyncio.sleep(soonest + 0.2)
+        for model in models:
+            if self._cooldown_until.get(model, 0) > time.monotonic():
                 continue
-            try:
-                return await self._complete_with(model, messages)
-            except RateLimitError as exc:
-                self._cooldown_until[model] = time.monotonic() + 60
-                last_error = exc
-                logger.warning("model %s is rate limited; skipping it for 60s", model)
-            except AuthenticationError as exc:
-                self._cooldown_until[model] = time.monotonic() + 300
-                last_error = exc
-                logger.warning("model %s rejected the API key; skipping it for 5 minutes", model)
-            except (APIError, TimeoutError, LLMError) as exc:
-                last_error = exc
-                logger.warning("model %s failed (%s); trying the next one", model, type(exc).__name__)
+            for attempt in range(2):
+                await wait_for_window()  # the per-minute token window is shared by every Groq model
+                try:
+                    return await self._complete_with(model, messages)
+                except RateLimitError as exc:
+                    wait = retry_wait(exc)
+                    last_error = exc
+                    if wait <= MAX_WAIT and attempt == 0:
+                        note_limited(wait)
+                        logger.warning("model %s hit the minute limit; waiting %.1fs", model, wait)
+                        continue
+                    self._cooldown_until[model] = time.monotonic() + min(wait, 3600)
+                    logger.warning("model %s is rate limited; skipping it for %.0fs", model, min(wait, 3600))
+                except AuthenticationError as exc:
+                    self._cooldown_until[model] = time.monotonic() + 300
+                    last_error = exc
+                    logger.warning("model %s rejected the API key; skipping it for 5 minutes", model)
+                except (APIError, TimeoutError, LLMError) as exc:
+                    last_error = exc
+                    logger.warning("model %s failed (%s); trying the next one", model, type(exc).__name__)
+                break
         if self._backup is not None:
             try:
                 return await self._complete_backup(messages)

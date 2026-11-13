@@ -28,7 +28,7 @@ from .flow import (
     apply_analysis, change_asked_write, flow_state_for, focus_lane, lanes_active, rebuild_writes, state_snapshot,
     stuck_slot_writes, user_turn_count,
 )
-from .slots import BY_KEY, SlotState
+from .slots import BY_KEY, WELLNESS, SlotState
 from .turn_guard import check as guard_check, repair_leaks, safe_reply
 from .turn_analyzer import TurnAnalysis, TurnAnalyzer
 from .llm import ChatModel, LLMError, OfflineChatModel
@@ -920,11 +920,14 @@ _CORE_RULES = (
     "value: echo it lightly once so they can correct it, not as a formal question. If a slot has a "
     "\"was\" value the visitor corrected it: thank them briefly and use the new value.\n"
     "3. Medical and wellness are separate journeys. Never move a value from one to the other. With "
-    "two journeys open, say which one you are on and tell them when you switch.\n"
+    "two journeys open, say which one you are on and tell them when you switch. If they ask for a "
+    "service from the other journey (a treatment while planning a retreat, or the reverse), say "
+    "yes, trawellcare can arrange that too, you will keep it separate, and a case manager (medical) "
+    "or wellness curator (wellness) will go through it. Never say you cannot help with it.\n"
     "4. State only facts found in KNOWLEDGE. If it is not there, say you do not have it and that "
     "the team can explain on the free consultation. Never invent prices, inclusions, hospitals, "
     "doctors, availability or outcomes. Programme names come only from KNOWLEDGE; if the visitor "
-    "uses a former name, use the current one. Never name, rank or recommend hospitals, doctors or "
+    "uses a former name, use the current one and never mention the former names yourself. Never name, rank or recommend hospitals, doctors or "
     "treatments, and never praise a destination.\n"
     "5. Never ask for or store diagnoses, symptoms, medications, reports, contact details, "
     "companion names or ages. Never promise a call, a booking or that anything is confirmed: the "
@@ -949,6 +952,20 @@ _CHIPS_INSTRUCTION = (
 )
 
 
+_HEALTH_FIT = re.compile(
+    r"\b(?:can|could|should|is it (?:safe|ok|okay)|safe for|suitable|allowed|able to)\b.{0,60}"
+    r"\b(?:blood pressure|hypertension|diabet|heart|cancer|pregnan|asthma|arthritis|condition|illness|"
+    r"disease|injur|disabilit|medication|surgery|mobility|chronic)\w*",
+    re.IGNORECASE,
+)
+_PERSONAL_DETAIL = re.compile(
+    r"\b(?i:mum|mom|mother|father|dad|wife|husband|son|daughter|sister|brother|friend|partner|parents?)"
+    r"(?:['’]s)?\s+(?i:name\s+is|is\s+called|called|is)\s+[A-Z]|\b(?:she|he|they)['’]?s\s+\d{1,3}\b|\b\d{1,3}\s*(?:years?|yrs?)\s*old\b|\baged?\s+\d{1,3}\b",
+)
+_BARE_ANSWER = re.compile(r"^(?:yes|yeah|yep|yup|sure|ok|okay|no|nope|nah)\W*$", re.IGNORECASE)
+_YES_NO_QUESTION = re.compile(
+    r"^\W*(?:would|shall|should|do|does|did|is|are|can|could|will|may|have|has)\b", re.IGNORECASE
+)
 _LOOSE_CHIPS_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
 
 
@@ -1194,7 +1211,8 @@ def _turn_instruction(
             + ". To arrange it they create a free trawellcare account or log in, which also "
             "keeps their details and any documents safe and lets them choose how we contact "
             "them. End by asking once whether you should take them to the signup and login "
-            "page now." + signup + " Do not take contact details in chat."
+            "page now. Do not write any web address yet: the link comes after they say yes. "
+            "Do not take contact details in chat."
         )
     if plan.decision_type == "post_submission":
         return (
@@ -1416,6 +1434,33 @@ class ChatService:
             parts.append(
                 "RECAP: the earlier notes were lost. Say \"Let me make sure I have this right.\", "
                 "state in plain words what STATE holds as HEARD, and ask them to confirm. Ask nothing else."
+            )
+        latest = text  # the raw message: stored copies are redacted, which hides clinical words
+        previous_assistant = next((m.content for m in reversed(conversation.messages[:-1]) if m.role == "assistant"), "")
+        if _HEALTH_FIT.search(latest):
+            parts.append(
+                "HEALTH QUESTION: the visitor asks whether a health condition fits a trip or programme. "
+                "Be warm. Do NOT say yes, no, safe, suitable or unsuitable, and give no medical advice. "
+                "Say that is exactly what a " + (
+                    "wellness curator" if focus_lane(conversation.case_facts) == WELLNESS else "case manager"
+                ) + " goes through privately with them on the free consultation, alongside their own doctor. "
+                "Do not ask about the condition."
+            )
+        if _PERSONAL_DETAIL.search(latest):
+            parts.append(
+                "PRIVACY: the visitor gave a name or an age for another person. Say in one short, kind "
+                "sentence that you will keep those personal details out of the enquiry summary and that "
+                "the case manager can take them privately. Do not repeat the name or age, and do not say "
+                "you cannot help."
+            )
+        if (
+            _BARE_ANSWER.match(latest.strip()) and plan.decision_type not in {"handoff_link", "handoff_declined", "signup_handoff"}
+            and not _YES_NO_QUESTION.search(previous_assistant.rsplit("?", 2)[-2] if previous_assistant.count("?") else "")
+        ):
+            parts.append(
+                "CHECK: the visitor sent a bare yes, no or ok, but your last question was not a yes or no "
+                "question. Do not assume what they meant. Say you want to be sure you understood, and "
+                "ask once, in a fresh way, what they would like to say."
             )
         active = lanes_active(conversation.case_facts)
         if len(active) > 1 and not conversation.case_facts.get("two_lanes_named"):

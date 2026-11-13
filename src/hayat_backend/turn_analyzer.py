@@ -11,6 +11,7 @@ Only the redacted message text is sent, the same copy the reply model already se
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -113,7 +114,12 @@ _SYSTEM_SLOTS = (
     '{"intent": str, "lane": "MEDICAL"|"WELLNESS"|null, "lane_ambiguous": bool, '
     '"correction": bool, "slots": {slot_id: {"value": str, "status": str}}, "note": str|null}\n'
     "SLOTS (use only these ids):\n"
-    "shared: s.preferred_name (first name only), s.residence_country (country only).\n"
+    "shared: s.preferred_name (first name only), s.residence_country (country only). Words like "
+    "I am in, we are in, we live in, based in, from always mean s.residence_country, never a destination.\n"
+    "A visitor who asks whether you can help with a body area or a procedure for themselves or "
+    "someone close (a knee problem, a heart valve operation) opens the MEDICAL journey: lane "
+    "MEDICAL and m.service_category with a plain specialty label (orthopaedics, cardiac), status "
+    "HEARD if vague. That is a service category, not a diagnosis.\n"
     "MEDICAL: m.service_category (a label like orthopaedics, dental, fertility, never a "
     "condition), m.destination_country, m.timeline_window (a window, not a date), m.budget_band "
     "(the visitor's own words, such as around 8000 or mid-range; never invent a currency or a band "
@@ -231,6 +237,11 @@ class TurnAnalyzer:
             {"role": "system", "content": system},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ]
+        from .ratelimit import MAX_WAIT, note_limited, retry_wait, wait_for_window
+
+        soonest = min(self._cooldown_until.get(m, 0) for m in self._models) - time.monotonic()
+        if 0 < soonest <= MAX_WAIT:  # every model is cooling down: wait for the first to reopen
+            await asyncio.sleep(soonest + 0.2)
         for model in self._models:
             if self._cooldown_until.get(model, 0) > time.monotonic():
                 continue
@@ -241,20 +252,28 @@ class TurnAnalyzer:
                 max_tokens = 800
             elif model.startswith("qwen/"):
                 extra["reasoning_effort"] = "none"  # no thinking: about 0.2s
-            try:
-                response = await self._client.chat.completions.create(
-                    model=model, messages=messages, temperature=0, max_tokens=max_tokens,
-                    response_format={"type": "json_object"}, timeout=self._timeout, **extra,
-                )
-                return parse_analysis(json.loads(response.choices[0].message.content or "{}"))
-            except RateLimitError:
-                self._cooldown_until[model] = time.monotonic() + 60
-                logger.warning("turn analysis: %s is rate limited, trying the next model", model)
-            except AuthenticationError:
-                self._cooldown_until[model] = time.monotonic() + 300
-                logger.warning("turn analysis: %s rejected the API key, skipping it", model)
-            except Exception as exc:  # try the next model; the rule-based path is the last resort
-                logger.warning("turn analysis failed on %s: %s", model, type(exc).__name__)
+            for attempt in range(2):
+                await wait_for_window()  # the per-minute token window is shared by every Groq model
+                try:
+                    response = await self._client.chat.completions.create(
+                        model=model, messages=messages, temperature=0, max_tokens=max_tokens,
+                        response_format={"type": "json_object"}, timeout=self._timeout, **extra,
+                    )
+                    return parse_analysis(json.loads(response.choices[0].message.content or "{}"))
+                except RateLimitError as exc:
+                    wait = retry_wait(exc)
+                    if wait <= MAX_WAIT and attempt == 0:
+                        note_limited(wait)
+                        logger.warning("turn analysis: %s hit the minute limit; waiting %.1fs", model, wait)
+                        continue
+                    self._cooldown_until[model] = time.monotonic() + min(wait, 3600)
+                    logger.warning("turn analysis: %s is rate limited, trying the next model", model)
+                except AuthenticationError:
+                    self._cooldown_until[model] = time.monotonic() + 300
+                    logger.warning("turn analysis: %s rejected the API key, skipping it", model)
+                except Exception as exc:  # try the next model; the rule-based path is the last resort
+                    logger.warning("turn analysis failed on %s: %s", model, type(exc).__name__)
+                break
         return await self._analyze_with_backup(payload)
 
     async def _analyze_with_backup(self, payload: dict[str, Any]) -> TurnAnalysis | None:

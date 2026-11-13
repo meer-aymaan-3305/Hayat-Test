@@ -60,12 +60,19 @@ _INTRO = re.compile(r"\bI(?:'m| am) Hayat\b", re.IGNORECASE)
 _OFFER = re.compile(
     r"sign ?up (?:and|or) log ?in|sign up and log in|create (?:a )?free (?:trawellcare )?account|"
     r"(?:if you(?:'d| would) like|if you like|shall i|would you like me to|we can start|ready to).{0,70}"
-    r"(?:consultation|sign ?up|log ?in|account)",
+    r"(?:consultation|sign ?up|log ?in|account)|"
+    r"would you like (?:to|me to) (?:schedule|arrange|book|set up|explore that|take the next step)|"
+    r"let me know if you(?:'d| would) like (?:to )?(?:start|set|begin|arrange|book|schedule)|"
+    r"(?:schedule|arrange|book) (?:that|the|your|a) (?:free )?(?:consultation|call|next step)",
     re.IGNORECASE,
 )
 _CURRENCY_AFTER_FIGURE = re.compile(r"(?<=\d)\s?(?:€|\$|£|USD|EUR|GBP|AED|OMR|SAR)\b|(?<=\d)\s?[€$£]", re.IGNORECASE)
 _MEDICAL_WORDS = re.compile(r"treatment|surgery|hospital|doctor|procedure|clinic|specialty", re.IGNORECASE)
 _WELLNESS_WORDS = re.compile(r"retreat|wellness|programme|program|longevity|fitness|spa", re.IGNORECASE)
+_ECHO = re.compile(
+    r"^\s*(?:i understand|i see|i hear)?[ ,]*(?:that )?you(?:'re| are) (?:asking|wondering|curious|considering|looking to ask)\b",
+    re.IGNORECASE,
+)
 _TAIL = re.compile(
     r"perfectly fine|totally fine|is all i need|no worries|no pressure|feel free|if you(?:'d| would) rather|"
     r"if you prefer|you can skip|a range|a number|a first name",
@@ -139,6 +146,10 @@ def check(
                 failures.append("G10")
                 dropped_question = True
                 continue
+        # Style: never repeat the visitor's question back at them ("You're asking about...").
+        if _ECHO.search(sentence) and len(sentences) > 1:
+            failures.append("G13")
+            continue
         # G6 (light): no price or outcome the knowledge base does not contain.
         # The visitor's own figure may be echoed, but never with a currency they did not name.
         if not re.search(r"[€$£]|USD|EUR|AED|OMR|SAR|GBP", user_text):
@@ -146,6 +157,10 @@ def check(
             if plan_digits(plain, sentence, user_text):
                 sentence = plain
         priced = _PRICE.search(sentence)
+        if priced and (
+            re.sub(r"\D", "", priced.group(0)) and re.sub(r"\D", "", priced.group(0)) in re.sub(r"\D", "", user_text)
+        ):
+            priced = None  # echoing the visitor's own figure back is not inventing a price
         if priced and priced.group(0).lower() not in knowledge.lower():
             failures.append("G6")
             kept.append("I don't have prices to hand, and the team can go through them with you on your free call.")
