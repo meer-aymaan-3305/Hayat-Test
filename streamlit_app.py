@@ -48,9 +48,11 @@ st.markdown(
 
       /* pills for suggested steps and programmes */
       .stButton > button {
-        border-radius: 999px; border: 1px solid #e5e7eb; background: #ffffff; color: #1f2937;
-        padding: .3rem 1rem; font-size: .88rem; font-weight: 500; box-shadow: none; min-height: 0;
+        border-radius: 18px; border: 1px solid #e5e7eb; background: #ffffff; color: #1f2937;
+        padding: .35rem 1rem; font-size: .88rem; font-weight: 500; box-shadow: none; min-height: 0;
+        height: auto; white-space: normal; line-height: 1.3; overflow: visible;
       }
+      .stButton > button p { white-space: normal; overflow: visible; text-overflow: clip; }
       .stButton > button:hover { border-color: #0f766e; color: #0f766e; background: #f0fdfa; }
       /* small ghost icon buttons under a reply */
       [class*="st-key-listen_"] button {
@@ -78,6 +80,11 @@ PROGRAMMES = [
     (programme.name, programme.tagline, f"Tell me about {programme.name}")
     for programme in programmes()
 ]
+
+
+def _keep_together(label: str) -> str:
+    """A hyphen inside a name (HAYAT-100) must not let the button wrap it and hide half of it."""
+    return label.replace("-", "\u2011")
 
 
 def _demo_client() -> requests.Session:
@@ -274,17 +281,17 @@ only_greeting = len(messages) <= 1
 if only_greeting and not st.session_state.get("awaiting_reply"):
     st.markdown('<div class="caption-muted">Start with one of our signature programmes</div>', unsafe_allow_html=True)
     for column, (name, tagline, message) in zip(st.columns(3), PROGRAMMES):
-        if column.button(f"**{name}**\n\n{tagline}", key=f"card_{name}", use_container_width=True):
+        if column.button(f"**{_keep_together(name)}**\n\n{tagline}", key=f"card_{name}", use_container_width=True):
             _send(message)
 else:
     if st.session_state.chips:
         columns = st.columns(len(st.session_state.chips))
         for index, (column, chip) in enumerate(zip(columns, st.session_state.chips)):
-            if column.button(chip, key=f"chip_{len(messages)}_{index}", use_container_width=True):
+            if column.button(_keep_together(chip), key=f"chip_{len(messages)}_{index}", use_container_width=True):
                 _send(chip)
     with st.expander("Signature programmes", expanded=False):
         for column, (name, tagline, message) in zip(st.columns(3), PROGRAMMES):
-            if column.button(name, help=tagline, key=f"prog_{name}", use_container_width=True):
+            if column.button(_keep_together(name), help=tagline, key=f"prog_{name}", use_container_width=True):
                 _send(message)
 
 if st.session_state.reference:

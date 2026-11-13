@@ -320,11 +320,12 @@ def test_the_fifth_visitor_message_triggers_the_offer_even_with_little_shared():
     assert conversation.case_facts["handoff_offered"] == "yes"
 
 
-def test_no_generic_suggestion_buttons_are_sent():
+def test_suggestions_always_follow_the_flow_even_when_the_model_gives_none():
     service, _, conversation = _service({"hello": TurnAnalysis(intent="smalltalk")})
     result = _say(service, conversation, "hello")
-    assert result["suggestions"] == []
-    assert result["suggested_actions"] == []
+    labels = [a.label for a in result["suggestions"]]
+    assert labels == ["A medical treatment", "A wellness retreat", "What can trawellcare do?"]
+    assert result["suggested_actions"] == result["suggestions"]
 
 
 def test_hayat_never_invents_a_signup_link():

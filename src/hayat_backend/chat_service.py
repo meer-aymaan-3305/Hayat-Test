@@ -28,7 +28,7 @@ from .flow import (
     apply_analysis, change_asked_write, flow_state_for, focus_lane, lanes_active, rebuild_writes, state_snapshot,
     stuck_slot_writes, user_turn_count,
 )
-from .slots import BY_KEY, WELLNESS, SlotState
+from .slots import BY_KEY, MEDICAL, WELLNESS, SlotState
 from .turn_guard import check as guard_check, repair_leaks, safe_reply
 from .turn_analyzer import TurnAnalysis, TurnAnalyzer
 from .llm import ChatModel, LLMError, OfflineChatModel
@@ -966,6 +966,48 @@ _BARE_ANSWER = re.compile(r"^(?:yes|yeah|yep|yup|sure|ok|okay|no|nope|nah)\W*$",
 _YES_NO_QUESTION = re.compile(
     r"^\W*(?:would|shall|should|do|does|did|is|are|can|could|will|may|have|has)\b", re.IGNORECASE
 )
+_NO_CHIP_STEPS = {
+    "stop_intake", "opt_out", "close", "handoff_link", "escalate", "human_request", "post_submission",
+}
+_SLOT_CHIPS = {
+    "m.service_category": ["Orthopaedics", "Cardiac care", "Dental"],
+    "m.destination_country": ["I'm flexible", "Help me compare", "Not decided yet"],
+    "m.timeline_window": ["Within 3 months", "Later this year", "I'm flexible"],
+    "m.budget_band": ["Not sure yet", "Prefer not to say", "Happy to discuss it"],
+    "m.travellers_count": ["Just me", "Two of us", "A small group"],
+    "s.residence_country": ["Prefer not to say"],
+    "w.experience_type": ["A longevity retreat", "Women's wellness", "Executive fitness"],
+    "w.goal_category": ["More energy", "Calm", "A fresh start"],
+    "w.destination": ["I'm flexible", "Somewhere warm", "Not decided yet"],
+    "w.dates_window": ["Next month", "In a few months", "I'm flexible"],
+    "w.duration_nights": ["A long weekend", "About a week", "Two weeks"],
+    "w.participants_count": ["Just me", "Two of us", "A small group"],
+    "w.budget_band": ["Not sure yet", "Prefer not to say", "Happy to discuss it"],
+}
+
+
+def _fallback_chips(plan: Any, conversation: Conversation) -> list[str]:
+    """Suggested next steps from the flow itself, used whenever the model gave none."""
+    if plan.decision_type == "signup_handoff":
+        return ["Yes, take me to signup", "Not right now"]
+    if plan.decision_type == "handoff_declined":
+        return ["Tell me about the programmes", "I have a question"]
+    if plan.slot_id and plan.slot_id in _SLOT_CHIPS:
+        return list(_SLOT_CHIPS[plan.slot_id])
+    facts = conversation.case_facts
+    focus = focus_lane(facts)
+    from .programmes_registry import alias_pattern
+
+    recent = " ".join(m.content for m in conversation.messages[-4:])
+    if re.search(alias_pattern(), recent, re.I) or re.search(r"hayat.?100", recent, re.I):
+        return ["What's included?", "Where is it held?", "Speak with a wellness curator"]
+    if focus == WELLNESS:
+        return ["What's included?", "Where are retreats held?", "Speak with a wellness curator"]
+    if focus == MEDICAL:
+        return ["How do you choose hospitals?", "What happens next?", "Speak with a case manager"]
+    return ["A medical treatment", "A wellness retreat", "What can trawellcare do?"]
+
+
 _LOOSE_CHIPS_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
 
 
@@ -2728,6 +2770,8 @@ class ChatService:
                 if len(sources) >= 3:
                     break
 
+        if self.handoff and not reply_chips and plan.decision_type not in _NO_CHIP_STEPS:
+            reply_chips = _fallback_chips(plan, conversation)  # the model left them out: never none
         if self.handoff and reply_chips:
             custom_suggestions = [
                 ChatAction(
