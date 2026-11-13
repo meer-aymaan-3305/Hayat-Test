@@ -371,3 +371,87 @@ def test_g4_at_most_one_question():
     _, state = _slots_with()
     out = _guard("Lovely. Where would you like to go? When would you like to go?", state)
     assert out.reply.count("?") == 1
+
+
+# ---- changes of mind, checked lightly (addendum 4.1) and a graceful close ------------------------------
+def _confirmed_chat(extra):
+    script = {"knee in India": A(intent="answering", lane="MEDICAL", slots=MED), **extra}
+    service, model, c = _chat(script, default=A(intent="smalltalk"))
+    say(service, c, "knee in India")
+    return service, model, c
+
+
+TURKEY = {"m.destination_country": {"value": "Turkey", "status": "CONFIRMED"}}
+
+
+def test_a_conflicting_value_is_held_and_checked_once_not_overwritten():
+    service, model, c = _confirmed_chat({"what about Turkey": A(intent="answering", lane="MEDICAL", slots=TURKEY)})
+    result = say(service, c, "what about Turkey")
+    assert slots(c).value("m.destination_country") == "India"  # not silently replaced
+    assert result["next_action"] == "confirm_change"
+    assert "second option" in model.calls[-1][0]["content"]
+
+
+def test_the_check_is_resolved_by_the_visitors_answer():
+    for answer, expected in [
+        ("yes change it", "Turkey"), ("both, a second option", "India and Turkey"), ("no keep India", "India"),
+    ]:
+        service, _, c = _confirmed_chat({
+            "what about Turkey": A(intent="answering", lane="MEDICAL", slots=TURKEY),
+            answer: A(intent="answering"),
+        })
+        say(service, c, "what about Turkey")
+        say(service, c, answer)
+        assert slots(c).value("m.destination_country") == expected, answer
+        assert not c.case_facts.get("pending_change")
+
+
+def test_an_explicit_correction_is_applied_without_a_check():
+    service, _, c = _confirmed_chat({"sorry, Turkey not India": A(
+        intent="answering", lane="MEDICAL", slots=TURKEY, correction=True)})
+    say(service, c, "sorry, Turkey not India")
+    assert slots(c).value("m.destination_country") == "Turkey"
+    assert slots(c).snapshot()["m.destination_country"]["was"] == "India"
+
+
+def test_a_visitor_who_is_done_is_closed_warmly_with_no_new_question():
+    service, model, c = _confirmed_chat({"thanks, that's all": A(intent="smalltalk")})
+    say(service, c, "hi")
+    result = say(service, c, "thanks, that's all")
+    assert result["next_action"] == "close"
+    assert c.case_facts["flow_state"] == "CLOSED"
+    assert "wrapping up" in model.calls[-1][0]["content"]
+    assert "?" not in result["reply"]
+
+
+def test_guard_strips_a_currency_the_visitor_never_named_and_a_repeated_soft_offer():
+    state = SlotState({})
+    kw = dict(plan=None, state=state, focus=None, active=[], assistant_history=["Earlier."], knowledge="", turn=4)
+    out = guard_check("Lovely, a budget of about 8000 € is noted.", user_text="budget about 8000", **kw)
+    assert "€" not in out.reply and "8000" in out.reply
+    out = guard_check("Got it. Would you like me to guide you to the signup or login page?",
+                      user_text="make it hip", **kw)
+    assert "signup" not in out.reply and "G5" in out.failures
+
+
+def test_a_chip_marker_without_the_label_never_leaks_into_the_reply():
+    from hayat_backend.chat_service import _split_chips
+
+    reply, chips = _split_chips("Which country are you in? [[I'm in the US|I'm in Canada]] Thanks.")
+    assert "[[" not in reply and chips == ["I'm in the US", "I'm in Canada"]
+
+
+def test_a_goodbye_is_not_an_opt_out_but_a_real_stop_request_is():
+    service, _, c = _confirmed_chat({"ok thanks, bye": A(intent="wants_stop")})
+    say(service, c, "hi")
+    assert say(service, c, "ok thanks, bye")["next_action"] == "close"
+    assert not c.case_facts.get("opt_out_requested")
+    service, _, c = _confirmed_chat({"please stop messaging me": A(intent="wants_stop")})
+    assert say(service, c, "please stop messaging me")["next_action"] == "opt_out"
+
+
+def test_unanswered_questions_are_not_recorded_as_unsure():
+    service, _, c = _confirmed_chat({"what about spa?": A(
+        intent="answering", slots={"m.timeline_window": {"value": "", "status": "UNSURE"}})})
+    say(service, c, "what about spa?")
+    assert slots(c).status("m.timeline_window") == "EMPTY"

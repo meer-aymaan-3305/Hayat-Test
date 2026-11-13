@@ -258,7 +258,7 @@ def test_a_rate_limited_model_fails_over_instead_of_failing_the_turn():
     assert tried == ["primary-model", "backup-model"]
 
 
-def test_total_model_outage_is_honest_and_does_not_advance_the_flow():
+def test_total_model_outage_gets_a_natural_reply_and_does_not_advance_the_flow():
     from hayat_backend.llm import LLMError
 
     class DownModel:
@@ -274,8 +274,7 @@ def test_total_model_outage_is_honest_and_does_not_advance_the_flow():
     service, _, _, conversation = _service(script)
     service.model = DownModel()
     result = _say(service, conversation, "I want knee surgery")
-    assert "can't reach my AI service" in result["reply"]
-    assert "noted" not in result["reply"].lower()
+    assert "can't reach" not in result["reply"] and "error" not in result["reply"].lower()  # never an error in chat
     assert "destination" not in result["reply"].lower()  # no flow question bolted on
     assert result["ai_status"] == "unavailable"
     assert "interested in knee surgery treatment" not in result["reply"]

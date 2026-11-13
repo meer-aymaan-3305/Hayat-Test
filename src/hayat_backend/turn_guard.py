@@ -57,9 +57,20 @@ _HUMAN_CLAIM = re.compile(
 )
 _GREETING = re.compile(r"^\s*(?:hello|hi|hey|good (?:morning|afternoon|evening)|welcome)\b", re.IGNORECASE)
 _INTRO = re.compile(r"\bI(?:'m| am) Hayat\b", re.IGNORECASE)
-_OFFER = re.compile(r"signup and login|sign up and log in|create a free (?:trawellcare )?account", re.IGNORECASE)
+_OFFER = re.compile(
+    r"sign ?up (?:and|or) log ?in|sign up and log in|create (?:a )?free (?:trawellcare )?account|"
+    r"(?:if you(?:'d| would) like|if you like|shall i|would you like me to|we can start|ready to).{0,70}"
+    r"(?:consultation|sign ?up|log ?in|account)",
+    re.IGNORECASE,
+)
+_CURRENCY_AFTER_FIGURE = re.compile(r"(?<=\d)\s?(?:€|\$|£|USD|EUR|GBP|AED|OMR|SAR)\b|(?<=\d)\s?[€$£]", re.IGNORECASE)
 _MEDICAL_WORDS = re.compile(r"treatment|surgery|hospital|doctor|procedure|clinic|specialty", re.IGNORECASE)
 _WELLNESS_WORDS = re.compile(r"retreat|wellness|programme|program|longevity|fitness|spa", re.IGNORECASE)
+_TAIL = re.compile(
+    r"perfectly fine|totally fine|is all i need|no worries|no pressure|feel free|if you(?:'d| would) rather|"
+    r"if you prefer|you can skip|a range|a number|a first name",
+    re.IGNORECASE,
+)
 _SAFE = (
     "Thank you for telling me that, I'm glad you did. Take your time, and tell me more whenever you like. 😊",
     "That helps me picture it better. Go on whenever you're ready, I'm listening.",
@@ -106,20 +117,34 @@ def check(
 
     kept: list[str] = []
     prev_questions = [s for s in _sentences(previous) if _is_question(s)]
+    dropped_question = False
     for sentence in sentences:
+        # A removed question takes its little tail ("A range is perfectly fine") with it.
+        if dropped_question and not _is_question(sentence) and _TAIL.search(sentence) and len(sentence.split()) <= 10:
+            dropped_question = False
+            continue
+        dropped_question = False
         # G8: no request for diagnosis, symptoms, medication, reports, contact details, ages.
         if _is_question(sentence) and _RESTRICTED_ASK.search(sentence):
             failures.append("G8")
+            dropped_question = True
             continue
         # G1 and G10: nothing already settled, and not the same question twice in a row.
         if _is_question(sentence):
-            if _asks_settled_slot(sentence, state, focus, active):
+            if getattr(plan, "decision_type", "") != "confirm_change" and _asks_settled_slot(sentence, state, focus, active):
                 failures.append("G1")
+                dropped_question = True
                 continue
             if any(_same_question(sentence, q) for q in prev_questions):
                 failures.append("G10")
+                dropped_question = True
                 continue
         # G6 (light): no price or outcome the knowledge base does not contain.
+        # The visitor's own figure may be echoed, but never with a currency they did not name.
+        if not re.search(r"[€$£]|USD|EUR|AED|OMR|SAR|GBP", user_text):
+            plain = _CURRENCY_AFTER_FIGURE.sub("", sentence)
+            if plan_digits(plain, sentence, user_text):
+                sentence = plain
         priced = _PRICE.search(sentence)
         if priced and priced.group(0).lower() not in knowledge.lower():
             failures.append("G6")
@@ -238,3 +263,11 @@ def _cross_lane_leak(reply: str, state: SlotState, focus: str) -> bool:
             if text in sentence.lower() and not other_words.search(sentence):
                 return True
     return False
+
+
+def plan_digits(stripped: str, original: str, user_text: str) -> bool:
+    """True when a currency was stripped from a figure the visitor themselves gave."""
+    if stripped == original:
+        return False
+    figures = re.findall(r"\d[\d,\.]*", original)
+    return any(f.strip(",.") and f.strip(",.") in user_text.replace(",", "") .replace(" ", "") + user_text for f in figures)

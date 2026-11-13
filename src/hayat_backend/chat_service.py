@@ -25,7 +25,7 @@ from .config import get_settings
 from .reference import enquiry_reference
 from .training_scripts import house_style, lower_brand, script_reply
 from .flow import (
-    apply_analysis, flow_state_for, focus_lane, lanes_active, rebuild_writes, state_snapshot,
+    apply_analysis, change_asked_write, flow_state_for, focus_lane, lanes_active, rebuild_writes, state_snapshot,
     stuck_slot_writes, user_turn_count,
 )
 from .slots import BY_KEY, SlotState
@@ -943,14 +943,23 @@ _CHIPS_INSTRUCTION = (
 )
 
 
+_LOOSE_CHIPS_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
+
+
 def _split_chips(text: str) -> tuple[str, list[str]]:
     """Separate the model's suggested next steps from its reply."""
     match = _CHIPS_RE.search(text)
-    if not match:
-        return text, []
-    reply = (text[: match.start()] + text[match.end():]).strip()
+    if match:
+        reply = (text[: match.start()] + text[match.end():]).strip()
+        parts = match.group(1).split("|")
+    else:
+        loose = _LOOSE_CHIPS_RE.findall(text)
+        if not loose:
+            return text, []
+        reply = re.sub(r"[ \t]{2,}", " ", _LOOSE_CHIPS_RE.sub(" ", text)).strip()
+        parts = [p for group in loose for p in group.split("|")]
     chips: list[str] = []
-    for raw in match.group(1).split("|"):
+    for raw in parts:
         chip = raw.strip().strip("\"'").strip()
         if (
             2 <= len(chip) <= 60
@@ -1136,6 +1145,20 @@ def _turn_instruction(
             "their free account." + signup
             + (f" If they would rather reach the team directly they can use {support}." if support else "")
             + " Do not take contact details in chat. Ask no other question."
+        )
+    if kind == "confirm_change":
+        return (
+            first + "\nConversation policy: the visitor gave a value that differs from one they "
+            "already confirmed, and they did not say it was a correction. Do NOT assume either way. "
+            "Acknowledge what they just said in a few words, then check once, lightly, in natural "
+            "words: " + (question or "") + " Ask nothing else."
+        )
+    if kind == "close":
+        return (
+            "\nConversation policy: the visitor is wrapping up. Thank them warmly in one or two "
+            "short sentences, and say in a few words that the free consultation is there whenever "
+            "they want it." + signup + " Do not ask any question and do not start a new topic. "
+            "Do not repeat anything you already said."
         )
     if kind == "handoff_link":
         return (
@@ -2162,6 +2185,9 @@ class ChatService:
                         field_name=key, value=str(value), status=FactStatus.CONFIRMED,
                         source_message_id=user_message.id, confidence=1.0,
                     ))
+            if plan.decision_type == "confirm_change":
+                for key, value in change_asked_write(conversation.case_facts):
+                    mark(key, value)
             mark("flow_state", flow_state_for(plan, conversation.case_facts, analysis.intent if analysis else None))
             if len(lanes_active(conversation.case_facts)) > 1:
                 mark("two_lanes_named", "yes")
@@ -2437,13 +2463,24 @@ class ChatService:
             recall = _recall_reply(conversation, language) if _RECALL_RE.search(text) else None
             if model_outage and style_ref:
                 reply = style_ref  # approved wording, better than an error message in the chat
-            elif model_outage:
-                # Every model failed. Say so honestly instead of a canned reply that
-                # sounds relevant but is not; the flow's own question is still appended.
+            elif model_outage and plan.decision_type == "close":
                 reply = (
-                    "عذراً، لا أستطيع الوصول إلى خدمة الذكاء الاصطناعي الآن. يرجى المحاولة بعد دقيقة."
+                    "شكراً لك على وقتك. الاستشارة المجانية متاحة متى شئت. 😊"
                     if language == "ar"
-                    else "Sorry, I can't reach my AI service right now. Please try again in a minute."
+                    else "Thank you for chatting with me. The free consultation is there whenever you want it, "
+                    "and I'm here if anything else comes up. 😊"
+                )
+            elif model_outage:
+                # Every model failed: never an error in the chat (addendum 5.2). A short natural
+                # reply that acknowledges what they said; the flow's own question is still appended.
+                reply = (
+                    "شكراً لك على مشاركة ذلك، أنا أستمع."
+                    if language == "ar"
+                    else safe_reply(
+                        user_turn_count(conversation),
+                        next((m.content for m in reversed(conversation.messages) if m.role == "assistant"), ""),
+                        slot_changes,
+                    )
                 )
             elif recall:
                 reply = recall
@@ -2582,7 +2619,7 @@ class ChatService:
         if (
             self.signup_url
             and plan.decision_type in {
-                "signup_handoff", "handoff_link", "handoff_declined",
+                "handoff_link", "handoff_declined", "close",
                 "human_request", "sign_in_required", "account_request_saved",
             }
             and self.signup_url not in reply

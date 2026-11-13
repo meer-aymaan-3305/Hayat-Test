@@ -6,6 +6,7 @@ in focus, or whether a handoff may be offered; it is told, every turn.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -43,6 +44,28 @@ def pending_slot_id(facts: dict[str, Any]) -> str | None:
     return slot if slot in BY_ID else None
 
 
+_DONT_KNOW = re.compile(
+    r"not sure|don'?t know|do not know|no idea|unsure|haven'?t (?:decided|thought)|undecided|not yet|"
+    r"flexible|no preference|any(?:thing| is fine)|whatever|open to (?:anything|suggestions)|you (?:tell|suggest|decide)",
+    re.I,
+)
+_REFUSES = re.compile(
+    r"prefer not|rather not|no thanks|skip|don'?t want to (?:say|share|tell)|not comfortable|private|"
+    r"not (?:going to|gonna) (?:say|share)|pass on that",
+    re.I,
+)
+_MEDICAL_TEXT = re.compile(r"treatment|surgery|replacement|operation|hospital|doctor|procedure|clinic|dental|knee|hip|heart", re.I)
+_WELLNESS_TEXT = re.compile(r"retreat|wellness|spa|longevity|detox|yoga|relax|programme|program", re.I)
+
+
+def lane_unclear(analysis: Any, text: str) -> bool:
+    """The analyzer's lane doubt, unless the visitor's own words name exactly one journey."""
+    if not getattr(analysis, "lane_ambiguous", False):
+        return False
+    medical, wellness = bool(_MEDICAL_TEXT.search(text)), bool(_WELLNESS_TEXT.search(text))
+    return medical == wellness
+
+
 def slot_updates(conversation: Any, analysis: Any) -> dict[str, tuple[str, str]]:
     """slot id -> (value, status) from the analysis, lane aware. Legacy flat facts are mapped
     into the lane the visitor is talking about."""
@@ -70,7 +93,15 @@ def slot_updates(conversation: Any, analysis: Any) -> dict[str, tuple[str, str]]
         sid: v for sid, v in updates.items()
         if v[1] not in (UNSURE, DECLINED) or sid == pending
     }
-    if analysis.lane_ambiguous:  # rule 4: write nothing until the visitor says which journey
+    # ...and only when the visitor's own words say so, not because the question went unanswered.
+    updates = {
+        sid: v for sid, v in updates.items()
+        if not (
+            (v[1] == UNSURE and not _DONT_KNOW.search(last_user))
+            or (v[1] == DECLINED and not (_REFUSES.search(last_user) or analysis.intent == "declines"))
+        )
+    }
+    if lane_unclear(analysis, last_user):  # rule 4: write nothing until the visitor says which journey
         updates = {sid: v for sid, v in updates.items() if BY_ID[sid].lane == SHARED}
     return updates
 
@@ -81,7 +112,10 @@ def apply_analysis(conversation: Any, analysis: Any, turn: int) -> list[tuple[st
     state = SlotState(facts)
     writes: list[tuple[str, Any]] = []
     touched: set[str] = set()
-    for slot_id, (value, status) in slot_updates(conversation, analysis).items():
+    updates = slot_updates(conversation, analysis)
+    updates, change_writes = _settle_changes(conversation, analysis, state, updates)
+    writes += change_writes
+    for slot_id, (value, status) in updates.items():
         writes += state.apply(slot_id, value or None, status, turn)
         if BY_ID[slot_id].lane != SHARED and status in (CONFIRMED, HEARD):
             touched.add(BY_ID[slot_id].lane)
@@ -126,13 +160,86 @@ def apply_analysis(conversation: Any, analysis: Any, turn: int) -> list[tuple[st
     if focus:
         writes += [("focus_lane", focus), ("customer_category", _LANE_CATEGORY[focus]),
                    ("trip_type", "medical" if focus == MEDICAL else "wellness")]
-    if analysis.lane_ambiguous and len(active) > 1:
+    if lane_unclear(analysis, next((m.content for m in reversed(conversation.messages) if m.role == "user"), "")) and len(active) > 1:
         writes.append(("lane_question", "1"))
     elif touched or analysis.slots:
         writes.append(("lane_question", ""))
     if analysis.intent == "accepts" and state.heard() and "make sure i have this right" in _last_assistant(conversation).lower():
         writes += state.promote_heard()  # they confirmed the recap
     return writes
+
+
+_CHANGE_YES = re.compile(r"\b(change|switch|instead|replace|yes|yeah|yep|correct|go with|make it|that one|the new)\b", re.I)
+_CHANGE_BOTH = re.compile(r"\b(both|second|also|as well|another option|alongside|in addition|too)\b", re.I)
+_SPACES = re.compile(r"\s+")
+
+
+def _norm(text: Any) -> str:
+    return _SPACES.sub(" ", str(text or "").strip().lower())
+
+
+def pending_change(facts: dict[str, Any]) -> dict[str, Any] | None:
+    raw = facts.get("pending_change")
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    except (TypeError, ValueError):
+        return None
+    return data if data.get("slot") in BY_ID and data.get("new") else None
+
+
+def change_asked_write(facts: dict[str, Any]) -> list[tuple[str, Any]]:
+    """The check has been put to the visitor: from now on their next message answers it."""
+    change = pending_change(facts)
+    if not change or change.get("asked"):
+        return []
+    return [("pending_change", json.dumps({**change, "asked": True}, ensure_ascii=False))]
+
+
+def _settle_changes(
+    conversation: Any, analysis: Any, state: SlotState, updates: dict[str, tuple[str, str]],
+) -> tuple[dict[str, tuple[str, str]], list[tuple[str, Any]]]:
+    """Addendum 4.1: a new answer that contradicts a CONFIRMED value, without being called a
+    correction, is held and checked once, lightly. A stated correction is applied at once."""
+    facts = conversation.case_facts
+    updates = dict(updates)
+    writes: list[tuple[str, Any]] = []
+    held = pending_change(facts)
+    settled = False
+    if held and held.get("asked"):
+        last_user = next((m.content for m in reversed(conversation.messages) if m.role == "user"), "")
+        asking = "?" in last_user and analysis.intent in {"question", "what_is_trawellcare", "how_it_works"}
+        if not asking:
+            sid, new, old = held["slot"], str(held["new"]), state.value(held["slot"])
+            restated = updates.get(sid, ("", ""))[0]
+            if _CHANGE_BOTH.search(last_user) and old:
+                updates[sid] = (f"{old} and {new}", CONFIRMED)
+            elif _CHANGE_YES.search(last_user) or analysis.intent == "accepts" or (
+                restated and _norm(restated) == _norm(new)
+            ):
+                updates[sid] = (new, CONFIRMED)
+            else:
+                updates.pop(sid, None)  # keep the old one
+            writes.append(("pending_change", ""))
+            held, settled = None, True
+    if held:
+        updates.pop(held["slot"], None)  # still waiting for the answer to the check
+    if getattr(analysis, "correction", False) or settled:
+        return updates, writes
+    for sid, (value, status) in list(updates.items()):
+        old = state.value(sid)
+        if status != CONFIRMED or not value or old is None or state.status(sid) != CONFIRMED:
+            continue
+        if sid == "s.preferred_name":
+            continue
+        a, b = _norm(old), _norm(value)
+        if a == b or a in b or b in a:
+            continue  # the same thing, or a more specific version of it
+        updates.pop(sid)
+        writes.append(("pending_change", json.dumps({"slot": sid, "new": value, "old": old}, ensure_ascii=False)))
+        break  # one check at a time
+    return updates, writes
 
 
 def _last_assistant(conversation: Any) -> str:
@@ -177,8 +284,11 @@ def plan_handoff(planner: Any, conversation: Any, decision: Any, intent: str | N
     # 1. Safety
     if facts.get("under_18") or intent == "under_18":
         return PlannedStep("stop_intake", "The visitor is under 18: intake stops (S14).")
-    if intent == "wants_stop":
+    last_text = next((m.content for m in reversed(messages) if m.role == "user"), "")
+    if intent == "wants_stop" and _STOP_WORDS.search(last_text):
         return PlannedStep("opt_out", "The visitor asked us to stop or to forget them (S11).")
+    if intent == "wants_stop":
+        intent = "smalltalk"  # a goodbye is not an opt-out request
     if intent == "wants_human":
         return PlannedStep("human_request", "The visitor wants a person now (S10).")
 
@@ -189,6 +299,29 @@ def plan_handoff(planner: Any, conversation: Any, decision: Any, intent: str | N
     if just_offered and intent == "declines":
         return PlannedStep("handoff_declined", "They declined the signup offer (S8).")
 
+    # A new value that contradicts a confirmed one is checked once, lightly (addendum 4.1).
+    change = pending_change(facts)
+    short_ask = intent == "question" and len(
+        next((m.content for m in reversed(messages) if m.role == "user"), "").split()
+    ) <= 6
+    if change and not change.get("asked") and (
+        intent not in {"question", "what_is_trawellcare", "how_it_works"} or short_ask
+    ):
+        slot = BY_ID[change["slot"]]
+        return PlannedStep(
+            "confirm_change", "A new answer conflicts with a confirmed one: check it once.",
+            question_goal=f"change {slot.label}", target_field=slot.key, slot_id=change["slot"],
+            lane=slot.lane if slot.lane != SHARED else focus,
+            question_text=(
+                f"Ask lightly whether they want to change {slot.label} from {change.get('old')} to "
+                f"{change['new']}, or whether {change['new']} is a second option alongside it."
+            ),
+        )
+
+    # A visitor who is simply done is let go warmly, with nothing new to answer or ask.
+    if _is_closing(conversation, intent):
+        return PlannedStep("close", "The visitor is wrapping up: close warmly, no new question.")
+
     # 2. Booking, quote or a callback: the offer comes straight away, whatever is filled in.
     if intent == "wants_booking":
         return PlannedStep(
@@ -197,7 +330,7 @@ def plan_handoff(planner: Any, conversation: Any, decision: Any, intent: str | N
         )
 
     # 3. Two journeys and a value that fits both: ask which, in one light question.
-    if analysis is not None and getattr(analysis, "lane_ambiguous", False) and len(active) > 1:
+    if analysis is not None and lane_unclear(analysis, next((m.content for m in reversed(messages) if m.role == "user"), "")) and len(active) > 1:
         return PlannedStep(
             "clarify_lane", "Rule 4: the value could belong to either journey.",
             question_goal="which journey",
@@ -293,7 +426,7 @@ def plan_handoff(planner: Any, conversation: Any, decision: Any, intent: str | N
                 "collect_detail", "The first journey is covered; move to the other and say so.",
                 question_goal=BY_ID[other_slot].label, target_field=BY_ID[other_slot].key,
                 slot_id=other_slot, lane=other, switch_lane=True,
-                question_text=f"Ask {BY_ID[other_slot].ask} for the {'retreat' if other == WELLNESS else 'treatment'}.",
+                question_text=_question_for(planner, BY_ID[other_slot].key, other),
             )
     if slot_id:
         slot = BY_ID[slot_id]
@@ -310,8 +443,38 @@ def plan_handoff(planner: Any, conversation: Any, decision: Any, intent: str | N
     return PlannedStep("answer", "Nothing is missing: stay with what the visitor wants to talk about.")
 
 
+_STOP_WORDS = re.compile(
+    r"\bstop\b|unsubscribe|don'?t (?:contact|message|call|email|text)|do not (?:contact|message|call|email)|"
+    r"forget (?:me|my)|delete (?:me|my)|remove (?:me|my)|opt[- ]?out|leave me alone|no more (?:messages|emails|calls)",
+    re.I,
+)
+_FAREWELL = re.compile(
+    r"\b(that'?s (?:all|it|everything|enough)|that will be all|nothing else|no (?:more|other) questions|"
+    r"i'?m (?:done|all set|good for now)|all good|good ?bye|bye|talk (?:to you )?later|see you|"
+    r"thanks?,? (?:that'?s|bye|for now)|i'?ll (?:think about it|come back|get back))\b",
+    re.I,
+)
+
+
+def _is_closing(conversation: Any, intent: str | None) -> bool:
+    last_user = next((m.content for m in reversed(conversation.messages) if m.role == "user"), "")
+    if not last_user or "?" in last_user or len(last_user.split()) > 14:
+        return False
+    if intent in {"question", "mixed", "wants_booking", "wants_human", "emotional", "clinical_detail"}:
+        return False
+    return bool(_FAREWELL.search(last_user)) and user_turn_count(conversation) >= 2
+
+
+_LANE_QUESTIONS = {
+    "w_destination": "Where would you love the retreat to be?",
+    "w_dates_window": "Roughly when are you thinking of going?",
+    "w_participants": "Will it be just you, or is anyone joining you?",
+    "w_budget_band": "Do you have a rough budget band in mind for the retreat? A range is perfectly fine 😊",
+}
+
+
 def _question_for(planner: Any, key: str, lane: str) -> str:
-    return planner._question_for(key, _LANE_CATEGORY.get(lane))
+    return _LANE_QUESTIONS.get(key) or planner._question_for(key, _LANE_CATEGORY.get(lane))
 
 
 def _clarify_attempts(conversation: Any) -> int:
@@ -329,7 +492,7 @@ def flow_state_for(step: PlannedStep, facts: dict[str, Any], intent: str | None)
         return "HANDOFF_OFFERED"
     if kind == "handoff_declined":
         return "HANDOFF_DECLINED"
-    if kind in {"handoff_link", "opt_out"}:
+    if kind in {"handoff_link", "opt_out", "close"}:
         return "CLOSED"
     if intent in {"question", "what_is_trawellcare", "how_it_works", "off_topic"}:
         return "GENERAL_QA"
