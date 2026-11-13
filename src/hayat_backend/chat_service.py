@@ -28,6 +28,7 @@ from .flow import (
     apply_analysis, change_asked_write, flow_state_for, focus_lane, lanes_active, rebuild_writes, state_snapshot,
     stuck_slot_writes, user_turn_count,
 )
+from .kb_playbook import respond as kb_respond
 from .slots import BY_KEY, MEDICAL, WELLNESS, SlotState
 from .turn_guard import check as guard_check, repair_leaks, safe_reply
 from .turn_analyzer import TurnAnalysis, TurnAnalyzer
@@ -966,6 +967,11 @@ _BARE_ANSWER = re.compile(r"^(?:yes|yeah|yep|yup|sure|ok|okay|no|nope|nah)\W*$",
 _YES_NO_QUESTION = re.compile(
     r"^\W*(?:would|shall|should|do|does|did|is|are|can|could|will|may|have|has)\b", re.IGNORECASE
 )
+_KB_SKIP_INTENTS = {
+    "clinical_detail", "asks_interpretation", "contact_request", "contact_channel", "wants_human", "wants_stop",
+    "under_18", "asks_if_human", "emotional", "declines", "accepts", "wants_booking", "what_is_trawellcare",
+    "how_it_works", "off_topic",
+}
 _NO_CHIP_STEPS = {
     "stop_intake", "opt_out", "close", "handoff_link", "escalate", "human_request", "post_submission",
 }
@@ -2314,6 +2320,28 @@ class ChatService:
                 else:
                     # Addendum 7.2: scripts are style examples, never copied word for word.
                     style_ref, reply_chips = script_text, script_chips
+
+        # The knowledge base's own answers and questions (Signature Programmes, sections 2 to 6),
+        # followed as written whenever the visitor's message is one of the situations it covers.
+        if (
+            self.handoff and clarification_reply is None and language == "en" and submission is None
+            and not decision.blocked and analysis is not None
+            and plan.decision_type in {"collect_detail", "answer", "clarify_category", "clarify_lane"}
+            and analysis.intent not in _KB_SKIP_INTENTS
+        ):
+            earlier = [m.content for m in conversation.messages[:-1] if m.role == "assistant"]
+            kb = kb_respond(
+                text, recent_text=" ".join(m.content for m in conversation.messages[-6:]),
+                state=SlotState(conversation.case_facts), focus=focus_lane(conversation.case_facts),
+                last_assistant=earlier[-1] if earlier else "", answered_before=earlier[-3:],
+            )
+            if kb is not None:
+                clarification_reply, reply_chips = house_style(kb.text), list(kb.chips)
+                self.store.save_fact_updates(conversation, [FactValue(
+                    field_name="pending_slot", value=kb.slot or "", status=FactStatus.CONFIRMED,
+                    source_message_id=user_message.id, confidence=1.0,
+                )])
+                logger.info("kb_playbook conversation=%s topic=%s", conversation.id, kb.topic)
 
         if submission is not None:
             reply = (

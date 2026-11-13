@@ -533,3 +533,52 @@ def test_a_health_fit_question_gets_a_no_advice_instruction():
     say(service, c, "can someone with high blood pressure join a retreat?")
     system = " ".join(call[0]["content"] for call in model.calls)
     assert "HEALTH QUESTION" in system and "Do NOT say yes, no, safe" in system
+
+
+# ---- the knowledge base's own answers and questions ---------------------------------------------------
+def test_programme_questions_get_the_documents_answer_and_the_documents_question():
+    service, model, c = _chat(default=A(intent="question"))
+    first = say(service, c, "Tell me about FFounders")
+    assert first["reply"].startswith("FFounders is a premium executive fitness and wellness retreat concept")
+    assert first["reply"].endswith("What interests you most about this experience?")
+    assert [a.label for a in first["suggestions"]] == ["What's included?", "Where is it held?", "How much does it cost?"]
+    where = say(service, c, "where is this retreat")
+    assert "Potential destinations include the United States, Spain, Japan" in where["reply"]
+    assert where["reply"].endswith("Do you have a particular country or destination in mind?")
+    assert c.case_facts["pending_slot"] == "w.destination"
+    price = say(service, c, "how much does it cost?")
+    assert "no fixed package price" in price["reply"] and price["reply"].endswith("May I ask which destination you are considering?")
+    assert not model.calls  # the document answered; the model was not needed
+
+
+def test_the_overview_dates_and_all_three_use_section_6_as_written():
+    service, _, c = _chat(default=A(intent="question"))
+    overview = say(service, c, "what programmes do you have?")["reply"]
+    assert overview.startswith("We have three signature wellness experiences") and "Zoé is a women's fitness" in overview
+    assert overview.endswith("May I ask which of these interests you most?") and "AAfiya" not in overview
+    dates = say(service, c, "when are the retreat dates?")["reply"]
+    assert dates == ("The retreat dates are still being curated. Do you have a preferred month or travel period? "
+                     "I can make a note of it for our team.")
+    assert say(service, c, "I like all three")["reply"].endswith("Is there one you'd currently prioritise?")
+
+
+def test_a_question_the_document_asks_is_left_out_once_it_is_settled():
+    service, _, c = _chat(default=A(intent="question"))
+    c.case_facts["slot_meta"] = '{"w.destination": {"status": "CONFIRMED", "turn": 1}}'
+    c.case_facts["w_destination"] = "Spain"
+    reply = say(service, c, "how much does it cost?")["reply"]
+    assert "May I ask which destination" not in reply
+
+
+def test_medical_questions_are_not_answered_from_the_programme_document():
+    service, model, c = _chat(default=A(intent="question"))
+    c.case_facts.update({"lanes_active": "MEDICAL", "focus_lane": "MEDICAL"})
+    say(service, c, "how much does a knee replacement cost?")
+    assert model.calls  # the model answered, not a programme FAQ
+
+
+def test_a_question_about_dates_fills_no_date_slot():
+    service, _, c = _chat({"when is the next one?": A(intent="question", lane="WELLNESS", slots={
+        "w.dates_window": {"value": "next one", "status": "CONFIRMED"}})})
+    say(service, c, "when is the next one?")
+    assert slots(c).status("w.dates_window") == "EMPTY"

@@ -104,6 +104,10 @@ def slot_updates(conversation: Any, analysis: Any) -> dict[str, tuple[str, str]]
         sid: v for sid, v in updates.items()
         if v[1] not in (UNSURE, DECLINED) or sid == pending
     }
+    # A question about dates is not a date: "when is the next one?" fills nothing.
+    if re.match(r"\s*(?:when|what|how|is|are|does|do|can|could)\b", last_user, re.I) and "?" in last_user:
+        for sid in ("w.dates_window", "m.timeline_window"):
+            updates.pop(sid, None)
     # "I'm in Oman" says where they live, whatever the analyzer made of it.
     place = _RESIDENCE.search(last_user)
     if place:
