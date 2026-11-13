@@ -18,13 +18,12 @@ restart) and no real SMS is sent.
 3. **Advanced settings**
    - Python version: **3.13** (the code is tested on 3.13 and 3.14; 3.12 also works).
    - Secrets: paste the contents of `.streamlit/secrets.toml.example` with real values
-     (at minimum `GROQ_API_KEY` and `APP_PASSWORD`).
+     (at minimum `GROQ_API_KEY`).
 4. **Deploy**. The first start takes a few minutes while dependencies install.
 
 ## 3. Share with the team
 - App menu -> **Share** -> turn **public access off** and add your teammates' emails as
   viewers. (Without this, anyone with the link can open the app.)
-- `APP_PASSWORD` adds a second gate in the app itself. Give the password to the team.
 
 ## 4. What the team will see
 - Only the chat is shown. Hayat greets by the visitor's browser time, introduces herself as an

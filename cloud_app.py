@@ -42,7 +42,6 @@ os.environ["HAYAT_CODE_VERSION"] = VERSION
 
 from hayat_backend.cloud_bootstrap import (  # noqa: E402
     apply_secrets,
-    password_ok,
     start_embedded_backend,
 )
 
@@ -53,27 +52,6 @@ apply_secrets(st.secrets)
 def _backend_url(version: str) -> str:
     return start_embedded_backend(ROOT)
 
-
-# Shared password for the team. Set APP_PASSWORD in the app secrets.
-# Fail closed: without it the app must not be reachable at all.
-expected_password = os.environ.get("APP_PASSWORD", "")
-if not expected_password:
-    st.error(
-        "This app is not configured yet: APP_PASSWORD is missing. "
-        "Ask the project owner to add it under Settings -> Secrets."
-    )
-    st.stop()
-if not st.session_state.get("team_access_ok"):
-    st.title("Hayat team test")
-    with st.form("team_login"):
-        entered = st.text_input("Team password", type="password")
-        if st.form_submit_button("Enter"):
-            if password_ok(entered, expected_password):
-                st.session_state.team_access_ok = True
-                st.rerun()
-            st.error("That password is not right. Spaces and capital letters do not matter.")
-    st.caption("Ask the project owner for the team password.")
-    st.stop()
 
 os.environ["HAYAT_CLOUD"] = "1"
 os.environ["HAYAT_API_URL"] = _backend_url(VERSION)
