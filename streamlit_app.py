@@ -166,8 +166,20 @@ def _speak(message_id: str | None) -> bytes | None:
     return spoken.content if spoken.ok else None
 
 
+# A public test link is shared with strangers: one visitor must not use up the AI quota for
+# everyone. PUBLIC_MAX_MESSAGES (secrets) sets the cap per browser session.
+MAX_MESSAGES = int(os.getenv("PUBLIC_MAX_MESSAGES", "40") or 40)
+
+
+def _sent_count() -> int:
+    return sum(1 for m in st.session_state.messages if m.get("role") == "user")
+
+
 def _send(text: str) -> None:
     """Queue a visitor message; it is shown at once and answered on the next run."""
+    if _sent_count() >= MAX_MESSAGES:
+        st.session_state.limit_reached = True
+        st.rerun()
     st.session_state.messages.append({"role": "user", "content": text})
     st.session_state.awaiting_reply = text
     st.session_state.chips = []
@@ -195,6 +207,12 @@ with right:
     signup_url = get_settings().signup_url
     if signup_url:
         link_col.link_button("Sign up / log in", signup_url, use_container_width=True)
+
+if os.getenv("PUBLIC_NOTICE", "true").lower() != "false":
+    st.caption(
+        "This is a test version of Hayat. Please don't share real medical records, contact details "
+        "or anything you would not want a test system to see."
+    )
 
 # ---- the conversation ------------------------------------------------------------------------
 messages = st.session_state.messages
@@ -305,8 +323,15 @@ if st.session_state.pop("ai_notice", False):
     st.caption("Hayat's AI service is busy or unavailable right now. Please try again in a minute.")
 
 # ---- composer: text, attach and voice in one place ----------------------------------------------
+limit_reached = _sent_count() >= MAX_MESSAGES
+if limit_reached:
+    st.info(
+        "Thank you for testing Hayat. This test chat has reached its message limit. "
+        "Open the link again in a new tab to start a fresh conversation."
+    )
 entry = st.chat_input(
     "Message Hayat",
+    disabled=limit_reached,
     accept_file="multiple",
     file_type=["pdf", "docx", "png", "jpg", "jpeg"],
     accept_audio=True,
@@ -339,8 +364,15 @@ if entry:
     elif files:
         st.rerun()
 
-# ---- for the project team only: ?debug=1 -----------------------------------------------------
-if st.query_params.get("debug") == "1" and os.getenv("HAYAT_CLOUD") == "1":
+# ---- for the project team only ----------------------------------------------------------------
+# On a public link the debug views need ?debug=<DEBUG_KEY> from the secrets; without a key set
+# they are off in the cloud (locally ?debug=1 still works).
+_debug_key = os.getenv("DEBUG_KEY", "")
+_debug_param = st.query_params.get("debug", "")
+debug_on = bool(_debug_param) and (
+    (_debug_key and _debug_param == _debug_key) or (not _debug_key and os.getenv("HAYAT_CLOUD") != "1" and _debug_param == "1")
+)
+if debug_on and os.getenv("HAYAT_CLOUD") == "1":
     st.caption(f"Code version {os.getenv('HAYAT_CODE_VERSION', 'unknown')}")
     with st.expander("AI connection check"):
         if st.button("Check now"):
@@ -351,7 +383,7 @@ if st.query_params.get("debug") == "1" and os.getenv("HAYAT_CLOUD") == "1":
 
 # What the pipeline decided on the last turn, so testers can report precisely (IMPLEMENTATION.md
 # phase 6): flow state, next action, reply source, guard results, passages and the slot store.
-if st.query_params.get("debug") == "1" and st.session_state.get("conversation_id"):
+if debug_on and st.session_state.get("conversation_id"):
     with st.expander("Last turn (team only)"):
         try:
             turns = api.get(

@@ -21,9 +21,26 @@ restart) and no real SMS is sent.
      (at minimum `GROQ_API_KEY`).
 4. **Deploy**. The first start takes a few minutes while dependencies install.
 
-## 3. Share with the team
-- App menu -> **Share** -> turn **public access off** and add your teammates' emails as
-  viewers. (Without this, anyone with the link can open the app.)
+## 3. Share it
+**Public test link (anyone with the link):** App -> Settings -> **Sharing** -> "Who can view
+this app" -> **This app is public and searchable** (or the **Share** button -> **Make this app
+public**). This works for apps deployed from a private repository; only the app's developers
+can change it.
+
+Before making it public:
+- `PUBLIC_MAX_MESSAGES` (default 40) caps messages per browser session, so one visitor cannot
+  use up the AI quota for everyone.
+- A short notice under the title asks testers not to share real medical records or contact
+  details. Set `PUBLIC_NOTICE = "false"` to hide it.
+- The team debug panel only opens with `?debug=<DEBUG_KEY>`; with no `DEBUG_KEY` set it is off.
+- The API runs inside the app on 127.0.0.1 and is not reachable from the internet.
+- Quota: the free Groq tier allows about 200,000 tokens per model per day (roughly 60 to 70
+  chat turns per model). When the models are limited, Hayat keeps working on its code-only path
+  (approved wording and correct memory, less natural phrasing). Upgrade Groq to Dev Tier, or add
+  a paid Gemini key, before sharing widely.
+
+**Team only:** turn public access off and add teammates' emails as viewers (Community Cloud
+allows one private app per account).
 
 ## 4. What the team will see
 - Only the chat is shown. Hayat greets by the visitor's browser time, introduces herself as an
@@ -31,7 +48,7 @@ restart) and no real SMS is sent.
 - She never takes contact details, diagnoses, reports or consent in chat. When enough is
   shared (or by the fifth message, or when asked for a person) she offers the free consultation
   (medical) or free call (wellness) through signup or login. Set `SIGNUP_URL` for the link.
-- Add `?debug=1` to the app address to see the AI connection check.
+- Add `?debug=<DEBUG_KEY>` to the app address to see the AI connection check and the last turn's record.
 - The knowledge Hayat answers from is in `knowledge_seed/`. Replace the files there and
   redeploy to change it.
 - The app sleeps after a period of inactivity and restarts fresh (in-memory data is lost).
@@ -76,7 +93,7 @@ and add to the secrets:
 ```
 LLM_FALLBACK_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 LLM_FALLBACK_API_KEY = "your-gemini-key"
-LLM_FALLBACK_MODEL = "gemini-2.5-flash"
+LLM_FALLBACK_MODEL = "gemini-3.5-flash"
 ```
 Any OpenAI-compatible service works (OpenRouter, OpenAI, ...).
 
